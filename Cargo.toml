@@ -1,0 +1,22 @@
+[package]
+name = "automatick"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+ticks = { git = "https://github.com/brendon-felix/ticks.git" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+open = "5.3"
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Ratatui TUI dependencies
+ratatui = { version = "0.28", features = ["serde"] }
+crossterm = { version = "0.28", features = ["serde", "event-stream"] }
+anyhow = "1.0"
+tokio-util = "0.7.9"
+futures = "0.3.28"
+strum = { version = "0.26", features = ["derive"] }
