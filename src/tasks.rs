@@ -5,22 +5,28 @@ use ticks::{
     TickTick,
 };
 
-/// Fetch all tasks (both today and inbox) at once
-pub async fn fetch_all_tasks(client: &TickTick) -> Result<(Vec<Task>, Vec<Task>), String> {
-    // Fetch both views concurrently
+/// Fetch all tasks (today, week, and inbox) at once
+pub async fn fetch_all_tasks(
+    client: &TickTick,
+) -> Result<(Vec<Task>, Vec<Task>, Vec<Task>), String> {
+    // Fetch all views concurrently
     let today_future = fetch_today_tasks(client);
+    let week_future = fetch_week_tasks(client);
     let inbox_future = fetch_inbox_tasks(client);
 
-    let (today_result, inbox_result) = tokio::join!(today_future, inbox_future);
+    let (today_result, week_result, inbox_result) =
+        tokio::join!(today_future, week_future, inbox_future);
 
     let mut today_tasks = today_result?;
+    let mut week_tasks = week_result?;
     let mut inbox_tasks = inbox_result?;
 
-    // Sort both task lists
+    // Sort all task lists
     sort_tasks(&mut today_tasks);
+    sort_tasks(&mut week_tasks);
     sort_tasks(&mut inbox_tasks);
 
-    Ok((today_tasks, inbox_tasks))
+    Ok((today_tasks, week_tasks, inbox_tasks))
 }
 
 /// Fetch all tasks from a specific project
@@ -96,6 +102,65 @@ pub async fn fetch_today_tasks(client: &TickTick) -> Result<Vec<Task>, String> {
     }
 
     Ok(today_tasks)
+}
+
+/// Fetch all tasks due in the next 7 days across all projects (including inbox)
+pub async fn fetch_week_tasks(client: &TickTick) -> Result<Vec<Task>, String> {
+    use chrono::Local;
+
+    // Get today's start time (beginning of day in local time)
+    let now = Local::now();
+    let today_end = now
+        .date_naive()
+        .and_hms_opt(23, 59, 59)
+        .unwrap()
+        .and_local_timezone(Local)
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+
+    // Get 7 days from now (end of day)
+    let week_end = (now + chrono::Duration::days(7))
+        .date_naive()
+        .and_hms_opt(23, 59, 59)
+        .unwrap()
+        .and_local_timezone(Local)
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+
+    // Fetch all tasks from all projects
+    let all_tasks = match client.get_all_tasks_in_projects().await {
+        Ok(tasks) => tasks,
+        Err(e) => return Err(format!("Failed to fetch tasks: {:?}", e)),
+    };
+
+    // Fetch inbox tasks
+    let inbox_id = ProjectID("inbox".to_string());
+    let inbox_tasks = match client.get_project_data(&inbox_id).await {
+        Ok(project_data) => project_data.tasks,
+        Err(e) => return Err(format!("Failed to fetch inbox tasks: {:?}", e)),
+    };
+
+    let mut week_tasks = Vec::new();
+
+    // Filter tasks from all projects that are due within the next 7 days
+    for task in all_tasks {
+        let task_due = task.due_date;
+        // Check if due_date is set (not epoch) and is within the next 7 days
+        if task_due.timestamp() > 0 && task_due >= today_end && task_due <= week_end {
+            week_tasks.push(task);
+        }
+    }
+
+    // Filter inbox tasks that are due within the next 7 days
+    for task in inbox_tasks {
+        let task_due = task.due_date;
+        // Check if due_date is set (not epoch) and is within the next 7 days
+        if task_due.timestamp() > 0 && task_due >= today_end && task_due <= week_end {
+            week_tasks.push(task);
+        }
+    }
+
+    Ok(week_tasks)
 }
 
 pub async fn create_task(

@@ -14,6 +14,7 @@ use crate::tui::Frame as TuiFrame;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewTab {
     Today,
+    Week,
     Inbox,
 }
 
@@ -168,7 +169,8 @@ impl TaskListUI {
 
     pub fn next_tab(&mut self) {
         self.current_tab = match self.current_tab {
-            ViewTab::Today => ViewTab::Inbox,
+            ViewTab::Today => ViewTab::Week,
+            ViewTab::Week => ViewTab::Inbox,
             ViewTab::Inbox => ViewTab::Today,
         };
         // Clear selection when switching tabs
@@ -178,7 +180,8 @@ impl TaskListUI {
     pub fn previous_tab(&mut self) {
         self.current_tab = match self.current_tab {
             ViewTab::Today => ViewTab::Inbox,
-            ViewTab::Inbox => ViewTab::Today,
+            ViewTab::Week => ViewTab::Today,
+            ViewTab::Inbox => ViewTab::Week,
         };
         // Clear selection when switching tabs
         self.select_none();
@@ -277,6 +280,12 @@ impl TaskListUI {
             Style::default().fg(HEADER_FG).bg(HEADER_BG)
         };
 
+        let week_style = if self.current_tab == ViewTab::Week {
+            Style::default().fg(Color::White).bg(SELECTED_BG).bold()
+        } else {
+            Style::default().fg(HEADER_FG).bg(HEADER_BG)
+        };
+
         let inbox_style = if self.current_tab == ViewTab::Inbox {
             Style::default().fg(Color::White).bg(SELECTED_BG).bold()
         } else {
@@ -286,6 +295,8 @@ impl TaskListUI {
         let tabs_line = Line::from(vec![
             Span::raw("│"),
             Span::styled(" 📅 Today ", today_style),
+            Span::raw("│"),
+            Span::styled(" 📆 Week ", week_style),
             Span::raw("│"),
             Span::styled(" 📥 Inbox ", inbox_style),
             Span::raw("│"),
@@ -306,6 +317,7 @@ impl TaskListUI {
     ) {
         let tab_name = match self.current_tab {
             ViewTab::Today => "Today",
+            ViewTab::Week => "Week",
             ViewTab::Inbox => "Inbox",
         };
         let border_color = match mode {
@@ -340,6 +352,25 @@ impl TaskListUI {
         }
 
         let selected_index = self.state.selected();
+        let format_date = |dt: &DateTime<Utc>, is_all_day: bool| -> Option<String> {
+            if dt.timestamp() == 0 {
+                None
+            } else {
+                let local: DateTime<Local> = dt.with_timezone(&Local);
+                if self.current_tab == ViewTab::Today {
+                    // For "Today" tab, only show time
+                    if is_all_day {
+                        None
+                    } else {
+                        Some(local.format("%I:%M %p").to_string())
+                    }
+                } else if is_all_day {
+                    Some(local.format("%m/%d/%Y").to_string())
+                } else {
+                    Some(local.format("%m/%d/%Y %I:%M %p").to_string())
+                }
+            }
+        };
         let items: Vec<ListItem> = tasks
             .iter()
             .enumerate()
@@ -356,24 +387,7 @@ impl TaskListUI {
                 };
 
                 let text_color = TEXT_FG;
-
-                // Helper to format datetime
-                let format_date = |dt: &DateTime<Utc>| -> Option<String> {
-                    if dt.timestamp() == 0 {
-                        None
-                    } else {
-                        let local: DateTime<Local> = dt.with_timezone(&Local);
-                        if task.is_all_day {
-                            Some(local.format("%m/%d/%Y").to_string())
-                        } else {
-                            Some(local.format("%m/%d/%Y %I:%M %p").to_string())
-                        }
-                    }
-                };
-
-                // Create three rows for each task
                 let row1 = Line::from("");
-
                 let mut row2_spans = vec![];
                 if is_selected {
                     row2_spans.push(Span::styled("▶ ", Style::default().fg(TEXT_FG)));
@@ -391,7 +405,7 @@ impl TaskListUI {
                 // Row 3 with date information
                 let mut row3_spans = vec![Span::raw("    ")];
 
-                if let Some(due_str) = format_date(&task.due_date) {
+                if let Some(due_str) = format_date(&task.due_date, task.is_all_day) {
                     // Check if task is overdue
                     let is_overdue = {
                         let now_local = chrono::Local::now();

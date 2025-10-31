@@ -30,9 +30,10 @@ pub struct App {
     pub error_message: Option<String>,
     pub error_ticks: u8,
     pub today_cache: Vec<Task>,
+    pub week_cache: Vec<Task>,
     pub inbox_cache: Vec<Task>,
     pub tasks_loaded: bool,
-    pub pending_tasks: Arc<Mutex<Option<(Vec<Task>, Vec<Task>)>>>,
+    pub pending_tasks: Arc<Mutex<Option<(Vec<Task>, Vec<Task>, Vec<Task>)>>>,
     pub current_tab: ViewTab,
 }
 
@@ -48,6 +49,7 @@ impl App {
             error_message: None,
             error_ticks: 0,
             today_cache: Vec::new(),
+            week_cache: Vec::new(),
             inbox_cache: Vec::new(),
             tasks_loaded: false,
             pending_tasks: Arc::new(Mutex::new(None)),
@@ -130,20 +132,28 @@ impl App {
     fn get_view_tasks(&self, tab: ViewTab) -> &Vec<Task> {
         match tab {
             ViewTab::Today => &self.today_cache,
+            ViewTab::Week => &self.week_cache,
             ViewTab::Inbox => &self.inbox_cache,
         }
     }
 
     /// Update the cache with new tasks and refresh the UI
-    fn update_cache(&mut self, today_tasks: Vec<Task>, inbox_tasks: Vec<Task>) {
+    fn update_cache(
+        &mut self,
+        today_tasks: Vec<Task>,
+        week_tasks: Vec<Task>,
+        inbox_tasks: Vec<Task>,
+    ) {
         // Update the caches
         self.today_cache = today_tasks;
+        self.week_cache = week_tasks;
         self.inbox_cache = inbox_tasks;
         self.tasks_loaded = true;
 
         // Update UI with current view's tasks
         let current_tasks = match self.ui.get_current_tab() {
             ViewTab::Today => &self.today_cache,
+            ViewTab::Week => &self.week_cache,
             ViewTab::Inbox => &self.inbox_cache,
         };
         self.ui.set_tasks(current_tasks);
@@ -170,6 +180,7 @@ impl App {
         self.current_tab = self.ui.get_current_tab();
         let tasks: &[Task] = match self.current_tab {
             ViewTab::Today => &self.today_cache,
+            ViewTab::Week => &self.week_cache,
             ViewTab::Inbox => &self.inbox_cache,
         };
         let mode = self.mode;
@@ -187,10 +198,10 @@ impl App {
         let pending = Arc::clone(&self.pending_tasks);
         tokio::spawn(async move {
             match fetch_all_tasks(&client).await {
-                Ok((today, inbox)) => {
+                Ok((today, week, inbox)) => {
                     // Store the tasks in pending storage
                     if let Ok(mut guard) = pending.lock() {
-                        *guard = Some((today, inbox));
+                        *guard = Some((today, week, inbox));
                     }
                     let _ = tx.send(Action::TasksFetched);
                 }
@@ -209,8 +220,8 @@ impl App {
             None
         };
 
-        if let Some((today, inbox)) = tasks_opt {
-            self.update_cache(today, inbox);
+        if let Some((today, week, inbox)) = tasks_opt {
+            self.update_cache(today, week, inbox);
         }
     }
 
@@ -320,6 +331,7 @@ impl App {
         self.current_tab = self.ui.get_current_tab();
         match self.current_tab {
             ViewTab::Today => self.ui.set_tasks(&self.today_cache),
+            ViewTab::Week => self.ui.set_tasks(&self.week_cache),
             ViewTab::Inbox => self.ui.set_tasks(&self.inbox_cache),
         }
     }
@@ -329,6 +341,7 @@ impl App {
         self.current_tab = self.ui.get_current_tab();
         match self.current_tab {
             ViewTab::Today => self.ui.set_tasks(&self.today_cache),
+            ViewTab::Week => self.ui.set_tasks(&self.week_cache),
             ViewTab::Inbox => self.ui.set_tasks(&self.inbox_cache),
         }
     }
