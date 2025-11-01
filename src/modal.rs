@@ -14,6 +14,7 @@ use crate::ui::{centered_rect, InputField};
 /// Trait for modal dialogs that can be displayed as overlays
 pub trait Modal {
     /// Get the title of the modal
+    #[allow(dead_code)]
     fn title(&self) -> &str;
 
     /// Handle key events for the modal
@@ -26,9 +27,11 @@ pub trait Modal {
     fn get_values(&self) -> Vec<String>;
 
     /// Clear all inputs
+    #[allow(dead_code)]
     fn clear_inputs(&mut self);
 
     /// Set initial values
+    #[allow(dead_code)]
     fn set_values(&mut self, values: Vec<String>);
 }
 

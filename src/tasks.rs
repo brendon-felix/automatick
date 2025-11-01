@@ -6,12 +6,6 @@ use ticks::{
     TickTick,
 };
 
-pub enum TimeUnit {
-    Days,
-    Weeks,
-    // Months,
-}
-
 /// Fetch all tasks (today, week, and inbox) at once
 pub async fn fetch_all_tasks(
     client: &TickTick,
@@ -236,18 +230,6 @@ pub async fn edit_task(
     task.publish_changes()
         .await
         .map_err(|e| format!("Failed to edit task: {:?}", e))
-}
-
-pub async fn postpone_task(task: &mut Task, t: i64, unit: TimeUnit) -> Result<(), String> {
-    let duration = match unit {
-        TimeUnit::Days => chrono::Duration::days(t),
-        TimeUnit::Weeks => chrono::Duration::weeks(t),
-    };
-    let new_due_date = task.due_date + duration;
-    task.due_date = new_due_date;
-    task.publish_changes()
-        .await
-        .map_err(|e| format!("Failed to postpone task: {:?}", e))
 }
 
 /// Mark a task as completed using client directly

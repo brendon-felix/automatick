@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, Lines};
+use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -136,39 +136,6 @@ impl TaskListUI {
         if self.visual_range.is_some() {
             self.visual_range = Some((0, 0));
         }
-    }
-
-    pub fn start_input_mode(
-        &mut self,
-        title: &str,
-        default_title: Option<String>,
-        default_date: Option<String>,
-        default_time: Option<String>,
-    ) {
-        self.input_title = title.to_string();
-        self.current_input_field = InputField::Title;
-
-        // Set values if provided, otherwise clear
-        if let Some(task_title) = default_title {
-            self.input_title_editor = EditorState::new(Lines::from(task_title));
-        } else {
-            self.input_title_editor = EditorState::default();
-        }
-
-        if let Some(date) = default_date {
-            self.input_date_editor = EditorState::new(Lines::from(date));
-        } else {
-            self.input_date_editor = EditorState::default();
-        }
-
-        if let Some(time) = default_time {
-            self.input_time_editor = EditorState::new(Lines::from(time));
-        } else {
-            self.input_time_editor = EditorState::default();
-        }
-
-        // Set the current editor to Insert mode and position cursor at end
-        self.set_current_editor_to_insert_mode();
     }
 
     pub fn start_modal<M: Modal + 'static>(&mut self, mut modal: M) {
