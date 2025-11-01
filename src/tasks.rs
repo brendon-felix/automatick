@@ -1,9 +1,16 @@
+use chrono::TimeZone;
 use chrono::{NaiveDate, NaiveTime};
 use ticks::{
     projects::ProjectID,
     tasks::{Task, TaskID, TaskPriority},
     TickTick,
 };
+
+pub enum TimeUnit {
+    Days,
+    Weeks,
+    // Months,
+}
 
 /// Fetch all tasks (today, week, and inbox) at once
 pub async fn fetch_all_tasks(
@@ -173,9 +180,6 @@ pub async fn create_task(
     date: Option<NaiveDate>,
     time: Option<NaiveTime>,
 ) -> Result<(), String> {
-    use chrono::TimeZone;
-    use ticks::projects::ProjectID;
-
     let mut builder = ticks::tasks::Task::builder(client, &title);
     let project_id = project.unwrap_or(ProjectID("inbox".to_string()));
     builder = builder.project_id(project_id);
@@ -197,6 +201,53 @@ pub async fn create_task(
         Ok(_) => Ok(()),
         Err(e) => Err(format!("Failed to create task: {:?}", e)),
     }
+}
+
+pub async fn edit_task(
+    task: &mut Task,
+    title: Option<String>,
+    project: Option<ProjectID>,
+    _content: Option<String>,
+    _description: Option<String>,
+    _priority: Option<TaskPriority>,
+    date: Option<NaiveDate>,
+    time: Option<NaiveTime>,
+) -> Result<(), String> {
+    if let Some(t) = title {
+        task.title = t;
+    }
+    if let Some(p) = project {
+        task.project_id = p;
+    }
+    if let Some(d) = date {
+        let datetime = if let Some(t) = time {
+            d.and_time(t)
+        } else {
+            task.is_all_day = true;
+            d.and_hms_opt(0, 0, 0).unwrap()
+        };
+        let utc_datetime = chrono::Local
+            .from_local_datetime(&datetime)
+            .unwrap()
+            .to_utc();
+        task.due_date = utc_datetime;
+        task.start_date = utc_datetime;
+    }
+    task.publish_changes()
+        .await
+        .map_err(|e| format!("Failed to edit task: {:?}", e))
+}
+
+pub async fn postpone_task(task: &mut Task, t: i64, unit: TimeUnit) -> Result<(), String> {
+    let duration = match unit {
+        TimeUnit::Days => chrono::Duration::days(t),
+        TimeUnit::Weeks => chrono::Duration::weeks(t),
+    };
+    let new_due_date = task.due_date + duration;
+    task.due_date = new_due_date;
+    task.publish_changes()
+        .await
+        .map_err(|e| format!("Failed to postpone task: {:?}", e))
 }
 
 /// Mark a task as completed using client directly

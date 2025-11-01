@@ -40,26 +40,28 @@ pub enum Action {
     // Task actions
     /// Mark task as complete
     CompleteTask,
+    /// Start delete task confirmation
+    StartDeleteTask,
     /// Delete selected task
     DeleteTask,
-    /// Postpone a task
-    PostponeTask,
     /// Start creating a new task
     StartCreateTask,
     /// Start editing selected task
     StartEditTask,
+    /// Postpone a task
+    StartPostponeTask,
     /// Cancel current input operation
     CancelInput,
     /// Confirm current input operation
     ConfirmInput,
-    /// Update input field
-    UpdateInput(String),
 
     // Mode changes
     /// Enter normal mode
     EnterNormal,
     /// Enter insert mode (for creating/editing)
     EnterInsert,
+    /// Enter visual mode (for multi-select)
+    EnterVisual,
     /// Enter processing mode (waiting for API)
     EnterProcessing,
     /// Exit processing mode
