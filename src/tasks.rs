@@ -215,6 +215,8 @@ pub async fn edit_task(
     }
     if let Some(d) = date {
         let datetime = if let Some(t) = time {
+            // When time is provided, ensure the task is not all-day
+            task.is_all_day = false;
             d.and_time(t)
         } else {
             task.is_all_day = true;
@@ -226,6 +228,22 @@ pub async fn edit_task(
             .to_utc();
         task.due_date = utc_datetime;
         task.start_date = utc_datetime;
+    } else if time.is_some() {
+        // Handle case where only time is being updated without changing the date
+        if let Some(t) = time {
+            // If we have a valid due_date and we're setting a time, update to non-all-day
+            if task.due_date.timestamp() > 0 {
+                task.is_all_day = false;
+                let current_date = task.due_date.with_timezone(&chrono::Local).date_naive();
+                let datetime = current_date.and_time(t);
+                let utc_datetime = chrono::Local
+                    .from_local_datetime(&datetime)
+                    .unwrap()
+                    .to_utc();
+                task.due_date = utc_datetime;
+                task.start_date = utc_datetime;
+            }
+        }
     }
     task.publish_changes()
         .await
