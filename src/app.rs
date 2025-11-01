@@ -100,6 +100,16 @@ impl App {
 
                     Action::SelectPrevious => self.ui.select_previous(),
                     Action::SelectNext => self.ui.select_next(),
+                    Action::SelectPreviousCycling => {
+                        let current_tab = self.ui.current_tab;
+                        let tasks = self.get_view_tasks(current_tab);
+                        self.ui.select_previous_cycling(tasks.len());
+                    }
+                    Action::SelectNextCycling => {
+                        let current_tab = self.ui.current_tab;
+                        let tasks = self.get_view_tasks(current_tab);
+                        self.ui.select_next_cycling(tasks.len());
+                    }
                     Action::SelectFirst => self.ui.select_first(),
                     Action::SelectLast => self.ui.select_last(),
                     Action::SelectNone => self.ui.select_none(),
@@ -360,7 +370,7 @@ impl App {
         } else {
             None
         };
-        let modal = TaskModal::new_with_defaults("New Task", None, default_date, None);
+        let modal = TaskModal::new_with_defaults("New Task", None, None, default_date, None, false);
         self.ui.start_modal(modal);
     }
 
@@ -390,6 +400,11 @@ impl App {
                 .get(task_index)
                 .map(|task| {
                     let task_title = task.title.clone();
+                    let task_description = if !task.content.is_empty() {
+                        Some(task.content.clone())
+                    } else {
+                        None
+                    };
                     let task_id = task.get_id().clone();
                     let project_id = task.project_id.clone();
 
@@ -416,17 +431,28 @@ impl App {
                         None
                     };
 
-                    (task_title, task_date, task_time, project_id, task_id)
+                    (
+                        task_title,
+                        task_description,
+                        task_date,
+                        task_time,
+                        project_id,
+                        task_id,
+                    )
                 });
 
-            if let Some((task_title, task_date, task_time, project_id, task_id)) = task_data {
+            if let Some((task_title, task_description, task_date, task_time, project_id, task_id)) =
+                task_data
+            {
                 self.mode = Mode::Insert;
                 self.editing_task = Some((project_id, task_id));
                 let modal = TaskModal::new_with_defaults(
                     "Edit Task",
                     Some(task_title),
+                    task_description,
                     task_date,
                     task_time,
+                    true,
                 );
                 self.ui.start_modal(modal);
             }
@@ -445,11 +471,8 @@ impl App {
             let values = if self.ui.has_modal() {
                 self.ui.get_modal_values()
             } else {
-                vec![
-                    self.ui.get_input_value().to_string(),
-                    self.ui.get_input_date(),
-                    self.ui.get_input_time(),
-                ]
+                // No overlay system anymore, this shouldn't happen
+                vec![]
             };
 
             // Check if this is a postpone modal (has 1 value: duration string)
@@ -585,16 +608,21 @@ impl App {
                 }
             }
 
-            // Handle create/edit task modal (has 3 values: title, date, time)
+            // Handle create/edit task modal (has 4 values: title, description, date, time)
             if !values.is_empty() && !values[0].is_empty() {
                 let title = values[0].clone();
-                let date = if values.len() > 1 {
+                let description = if values.len() > 1 {
                     values[1].clone()
                 } else {
                     String::new()
                 };
-                let time = if values.len() > 2 {
+                let date = if values.len() > 2 {
                     values[2].clone()
+                } else {
+                    String::new()
+                };
+                let time = if values.len() > 3 {
+                    values[3].clone()
                 } else {
                     String::new()
                 };
@@ -611,11 +639,16 @@ impl App {
                         // Editing existing task
                         match ticks::tasks::Task::get(&client, &project_id, &task_id).await {
                             Ok(mut task) => {
+                                let content = if !description.is_empty() {
+                                    Some(description)
+                                } else {
+                                    None
+                                };
                                 tasks::edit_task(
                                     &mut task,
                                     Some(title),
                                     None,
-                                    None,
+                                    content,
                                     None,
                                     None,
                                     due_date,
@@ -627,8 +660,13 @@ impl App {
                         }
                     } else {
                         // Creating new task
+                        let content = if !description.is_empty() {
+                            Some(description)
+                        } else {
+                            None
+                        };
                         tasks::create_task(
-                            &client, title, None, None, None, None, due_date, due_time,
+                            &client, title, None, content, None, None, due_date, due_time,
                         )
                         .await
                     };
@@ -644,9 +682,8 @@ impl App {
 
             if self.ui.has_modal() {
                 self.ui.close_modal();
-            } else {
-                self.ui.clear_input();
             }
+            // No overlay system anymore, should always have modal in Insert mode
             self.editing_task = None;
             self.mode = Mode::Normal;
         }
@@ -665,7 +702,7 @@ impl App {
         }
 
         if self.mode == Mode::Insert {
-            self.ui.clear_input();
+            // No overlay system anymore, should always have modal in Insert mode
             self.editing_task = None;
             self.mode = Mode::Normal;
         }
@@ -745,8 +782,12 @@ impl App {
                     }
                 }
                 KeyCode::Char('?') => action_tx.send(Action::ToggleHelp)?,
-                KeyCode::Char('j') | KeyCode::Down => action_tx.send(Action::SelectNext)?,
-                KeyCode::Char('k') | KeyCode::Up => action_tx.send(Action::SelectPrevious)?,
+                KeyCode::Char('j') | KeyCode::Down => action_tx.send(Action::SelectNextCycling)?,
+                KeyCode::Char('k') | KeyCode::Up => {
+                    action_tx.send(Action::SelectPreviousCycling)?
+                }
+                KeyCode::Tab => action_tx.send(Action::SelectNextCycling)?,
+                KeyCode::BackTab => action_tx.send(Action::SelectPreviousCycling)?,
                 KeyCode::Char('g') | KeyCode::Home => action_tx.send(Action::SelectFirst)?,
                 KeyCode::Char('G') | KeyCode::End => action_tx.send(Action::SelectLast)?,
                 KeyCode::Char('h') | KeyCode::Left => action_tx.send(Action::PreviousTab)?,
@@ -760,16 +801,16 @@ impl App {
                 // Check for special keys first
                 match key.code {
                     KeyCode::Esc => {
-                        // If current editor is in Insert mode, let it handle Escape to go to Normal mode
+                        // If there's a modal, let it handle the Esc key first
                         if self.ui.has_modal() {
-                            if let Some(_modal) = &self.ui.current_modal {
-                                // For modals, always cancel on Escape
+                            // Pass Esc to modal - it will return false if it wants the app to handle it
+                            let handled = self.ui.handle_modal_key_event(key).unwrap_or(false);
+                            if !handled {
+                                // Modal didn't handle it (already in normal mode), close the modal
                                 action_tx.send(Action::CancelInput)?;
                             }
-                        } else if self.ui.is_current_editor_in_insert_mode() {
-                            self.ui.handle_input_key_event(key)?;
                         } else {
-                            // If editor is already in Normal mode, close the modal
+                            // No overlay system anymore, should always have modal in Insert mode
                             action_tx.send(Action::CancelInput)?;
                         }
                     }
@@ -784,16 +825,15 @@ impl App {
                         {
                             action_tx.send(Action::ConfirmInput)?;
                         }
-                        // Regular Enter only confirms if current editor is in Normal mode
-                        else if !self.ui.is_current_editor_in_insert_mode() {
-                            action_tx.send(Action::ConfirmInput)?;
-                        }
-                        // If in Insert mode, pass Enter to the editor
+                        // For modals, pass Enter to the modal to handle
                         else {
                             if self.ui.has_modal() {
-                                let _ = self.ui.handle_modal_key_event(key);
-                            } else {
-                                self.ui.handle_input_key_event(key)?;
+                                // Pass Enter to modal - it will return false if it wants the app to handle it
+                                let handled = self.ui.handle_modal_key_event(key).unwrap_or(false);
+                                if !handled {
+                                    // Modal didn't handle it (in normal mode), confirm the input
+                                    action_tx.send(Action::ConfirmInput)?;
+                                }
                             }
                         }
                     }
@@ -801,17 +841,20 @@ impl App {
                         if self.mode == Mode::Insert {
                             if self.ui.has_modal() {
                                 let _ = self.ui.handle_modal_key_event(key);
-                            } else {
-                                self.ui.handle_input_key_event(key)?;
                             }
+                            // No overlay system anymore
                         }
                     }
                 }
             }
             Mode::Visual => match key.code {
                 KeyCode::Esc => action_tx.send(Action::EnterNormal)?,
-                KeyCode::Char('j') | KeyCode::Down => action_tx.send(Action::SelectNext)?,
-                KeyCode::Char('k') | KeyCode::Up => action_tx.send(Action::SelectPrevious)?,
+                KeyCode::Char('j') | KeyCode::Down => action_tx.send(Action::SelectNextCycling)?,
+                KeyCode::Char('k') | KeyCode::Up => {
+                    action_tx.send(Action::SelectPreviousCycling)?
+                }
+                KeyCode::Tab => action_tx.send(Action::SelectNextCycling)?,
+                KeyCode::BackTab => action_tx.send(Action::SelectPreviousCycling)?,
                 KeyCode::Char('g') | KeyCode::Home => action_tx.send(Action::SelectFirst)?,
                 KeyCode::Char('G') | KeyCode::End => action_tx.send(Action::SelectLast)?,
                 KeyCode::Char('d') => action_tx.send(Action::StartDeleteTask)?,

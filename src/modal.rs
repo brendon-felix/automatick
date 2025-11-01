@@ -14,7 +14,6 @@ use crate::ui::{centered_rect, InputField};
 /// Trait for modal dialogs that can be displayed as overlays
 pub trait Modal {
     /// Get the title of the modal
-    #[allow(dead_code)]
     fn title(&self) -> &str;
 
     /// Handle key events for the modal
@@ -27,11 +26,9 @@ pub trait Modal {
     fn get_values(&self) -> Vec<String>;
 
     /// Clear all inputs
-    #[allow(dead_code)]
     fn clear_inputs(&mut self);
 
     /// Set initial values
-    #[allow(dead_code)]
     fn set_values(&mut self, values: Vec<String>);
 }
 
@@ -39,10 +36,12 @@ pub trait Modal {
 pub struct TaskModal {
     title: String,
     input_title_editor: EditorState,
+    input_description_editor: EditorState,
     input_date_editor: EditorState,
     input_time_editor: EditorState,
     current_input_field: InputField,
     event_handler: EditorEventHandler,
+    is_edit_mode: bool,
 }
 
 impl TaskModal {
@@ -50,23 +49,32 @@ impl TaskModal {
         Self {
             title: title.to_string(),
             input_title_editor: EditorState::default(),
+            input_description_editor: EditorState::default(),
             input_date_editor: EditorState::default(),
             input_time_editor: EditorState::default(),
             current_input_field: InputField::Title,
             event_handler: EditorEventHandler::default(),
+            is_edit_mode: false,
         }
     }
 
     pub fn new_with_defaults(
         title: &str,
         default_title: Option<String>,
+        default_description: Option<String>,
         default_date: Option<String>,
         default_time: Option<String>,
+        is_edit_mode: bool,
     ) -> Self {
         let mut modal = Self::new(title);
+        modal.is_edit_mode = is_edit_mode;
 
         if let Some(task_title) = default_title {
             modal.input_title_editor = EditorState::new(Lines::from(task_title));
+        }
+
+        if let Some(description) = default_description {
+            modal.input_description_editor = EditorState::new(Lines::from(description));
         }
 
         if let Some(date) = default_date {
@@ -77,9 +85,17 @@ impl TaskModal {
             modal.input_time_editor = EditorState::new(Lines::from(time));
         }
 
-        // Set initial mode and cursor position
-        modal.set_current_editor_to_insert_mode();
+        // Set editor modes and cursor position
         modal.position_cursor_at_end();
+
+        // Set modes AFTER positioning cursor to ensure they stick
+        if is_edit_mode {
+            // For Edit Task: set all editors to Normal mode
+            modal.set_all_editors_to_normal_mode();
+        } else {
+            // For New Task: set current editor to Insert mode
+            modal.set_current_editor_to_insert_mode();
+        }
 
         modal
     }
@@ -87,6 +103,7 @@ impl TaskModal {
     fn get_current_editor_mut(&mut self) -> &mut EditorState {
         match self.current_input_field {
             InputField::Title => &mut self.input_title_editor,
+            InputField::Description => &mut self.input_description_editor,
             InputField::Date => &mut self.input_date_editor,
             InputField::Time => &mut self.input_time_editor,
         }
@@ -95,6 +112,7 @@ impl TaskModal {
     fn get_current_editor(&self) -> &EditorState {
         match self.current_input_field {
             InputField::Title => &self.input_title_editor,
+            InputField::Description => &self.input_description_editor,
             InputField::Date => &self.input_date_editor,
             InputField::Time => &self.input_time_editor,
         }
@@ -102,23 +120,45 @@ impl TaskModal {
 
     pub fn next_input_field(&mut self) {
         self.current_input_field = match self.current_input_field {
-            InputField::Title => InputField::Date,
+            InputField::Title => InputField::Description,
+            InputField::Description => InputField::Date,
             InputField::Date => InputField::Time,
             InputField::Time => InputField::Title,
         };
+        // Ensure mode is preserved when switching fields
+        if self.is_edit_mode {
+            self.set_current_editor_to_normal_mode();
+        }
     }
 
     pub fn previous_input_field(&mut self) {
         self.current_input_field = match self.current_input_field {
             InputField::Title => InputField::Time,
-            InputField::Date => InputField::Title,
+            InputField::Description => InputField::Title,
+            InputField::Date => InputField::Description,
             InputField::Time => InputField::Date,
         };
+        // Ensure mode is preserved when switching fields
+        if self.is_edit_mode {
+            self.set_current_editor_to_normal_mode();
+        }
     }
 
     pub fn set_current_editor_to_insert_mode(&mut self) {
         let editor = self.get_current_editor_mut();
         editor.mode = EditorMode::Insert;
+    }
+
+    pub fn set_current_editor_to_normal_mode(&mut self) {
+        let editor = self.get_current_editor_mut();
+        editor.mode = EditorMode::Normal;
+    }
+
+    pub fn set_all_editors_to_normal_mode(&mut self) {
+        self.input_title_editor.mode = EditorMode::Normal;
+        self.input_description_editor.mode = EditorMode::Normal;
+        self.input_date_editor.mode = EditorMode::Normal;
+        self.input_time_editor.mode = EditorMode::Normal;
     }
 
     pub fn position_cursor_at_end(&mut self) {
@@ -134,6 +174,124 @@ impl TaskModal {
         }
     }
 
+    pub fn position_cursor_at_start(&mut self) {
+        let editor = self.get_current_editor_mut();
+        editor.cursor = Index2::new(0, 0);
+    }
+
+    fn is_at_first_line_in_multiline_field(&self) -> bool {
+        if self.current_input_field != InputField::Description {
+            return false;
+        }
+        let editor = self.get_current_editor();
+        editor.cursor.row == 0
+    }
+
+    fn is_at_last_line_in_multiline_field(&self) -> bool {
+        if self.current_input_field != InputField::Description {
+            return false;
+        }
+        let editor = self.get_current_editor();
+        if editor.lines.is_empty() {
+            return true;
+        }
+        let last_row_idx = editor.lines.len().saturating_sub(1);
+        editor.cursor.row >= last_row_idx
+    }
+
+    fn navigate_to_first_field_or_line(&mut self) {
+        if self.current_input_field == InputField::Description {
+            // If in description field, go to first line
+            let editor = self.get_current_editor_mut();
+            editor.cursor = Index2::new(0, 0);
+        } else {
+            // Go to first field (Title)
+            self.current_input_field = InputField::Title;
+            self.position_cursor_at_start();
+            if self.is_edit_mode {
+                self.set_current_editor_to_normal_mode();
+            }
+        }
+    }
+
+    fn navigate_to_last_field_or_line(&mut self) {
+        if self.current_input_field == InputField::Description {
+            // If in description field, go to last line
+            let editor = self.get_current_editor_mut();
+            if !editor.lines.is_empty() {
+                let last_row_idx = editor.lines.len().saturating_sub(1);
+                if let Some(last_col) = editor.lines.len_col(last_row_idx) {
+                    editor.cursor = Index2::new(last_row_idx, last_col);
+                }
+            }
+        } else {
+            // Go to last field (Time)
+            self.current_input_field = InputField::Time;
+            self.position_cursor_at_end();
+            if self.is_edit_mode {
+                self.set_current_editor_to_normal_mode();
+            }
+        }
+    }
+
+    fn handle_j_navigation(&mut self) -> bool {
+        if self.current_input_field == InputField::Description {
+            // In description field, check if we're at the last line
+            if self.is_at_last_line_in_multiline_field() {
+                // Move to next field
+                self.next_input_field();
+                self.position_cursor_at_start();
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                return true;
+            } else {
+                // Let editor handle moving down within the field
+                return false;
+            }
+        } else {
+            // In single-line field, move to next field
+            self.next_input_field();
+            // When moving down with j, position cursor at start of next field
+            if self.current_input_field == InputField::Description {
+                self.position_cursor_at_start();
+            } else {
+                self.position_cursor_at_start();
+            }
+            if self.is_edit_mode {
+                self.set_current_editor_to_normal_mode();
+            }
+            return true;
+        }
+    }
+
+    fn handle_k_navigation(&mut self) -> bool {
+        if self.current_input_field == InputField::Description {
+            // In description field, check if we're at the first line
+            if self.is_at_first_line_in_multiline_field() {
+                // Move to previous field
+                self.previous_input_field();
+                self.position_cursor_at_end();
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                return true;
+            } else {
+                // Let editor handle moving up within the field
+                return false;
+            }
+        } else {
+            // In single-line field, move to previous field
+            self.previous_input_field();
+            // When moving up with k, position cursor at end of previous field
+            self.position_cursor_at_end();
+            if self.is_edit_mode {
+                self.set_current_editor_to_normal_mode();
+            }
+            return true;
+        }
+    }
+
     pub fn is_current_editor_in_insert_mode(&self) -> bool {
         let editor = self.get_current_editor();
         editor.mode == EditorMode::Insert
@@ -141,6 +299,10 @@ impl TaskModal {
 
     pub fn get_input_value(&self) -> String {
         String::from(self.input_title_editor.lines.clone())
+    }
+
+    pub fn get_input_description(&self) -> String {
+        String::from(self.input_description_editor.lines.clone())
     }
 
     pub fn get_input_date(&self) -> String {
@@ -156,6 +318,10 @@ impl TaskModal {
             InputField::Title => {
                 self.event_handler
                     .on_key_event(key_event, &mut self.input_title_editor);
+            }
+            InputField::Description => {
+                self.event_handler
+                    .on_key_event(key_event, &mut self.input_description_editor);
             }
             InputField::Date => {
                 self.event_handler
@@ -179,17 +345,142 @@ impl Modal for TaskModal {
         use crossterm::event::KeyCode;
 
         match key_event.code {
+            KeyCode::Esc => {
+                // If current editor is in insert mode, switch to normal mode
+                if self.is_current_editor_in_insert_mode() {
+                    let editor = self.get_current_editor_mut();
+                    editor.mode = EditorMode::Normal;
+                    Ok(true)
+                } else {
+                    // Already in normal mode, let app handle it (close modal)
+                    Ok(false)
+                }
+            }
+            KeyCode::Enter => {
+                match self.current_input_field {
+                    InputField::Description => {
+                        if self.is_current_editor_in_insert_mode() {
+                            // Allow newline insertion for description field in insert mode
+                            self.handle_input_key_event(key_event)?;
+                            Ok(true)
+                        } else {
+                            // In normal mode, confirm input
+                            Ok(false)
+                        }
+                    }
+                    InputField::Title | InputField::Date | InputField::Time => {
+                        // For single-line fields, always confirm input (both normal and insert mode)
+                        Ok(false)
+                    }
+                }
+            }
             KeyCode::Tab => {
                 self.next_input_field();
-                self.set_current_editor_to_insert_mode();
                 self.position_cursor_at_end();
+                if !self.is_edit_mode {
+                    self.set_current_editor_to_insert_mode();
+                } else {
+                    // For edit mode, ensure we stay in Normal mode
+                    self.set_current_editor_to_normal_mode();
+                }
                 Ok(true)
             }
             KeyCode::BackTab => {
                 self.previous_input_field();
-                self.set_current_editor_to_insert_mode();
                 self.position_cursor_at_end();
+                if !self.is_edit_mode {
+                    self.set_current_editor_to_insert_mode();
+                } else {
+                    // For edit mode, ensure we stay in Normal mode
+                    self.set_current_editor_to_normal_mode();
+                }
                 Ok(true)
+            }
+            KeyCode::Char('j') => {
+                // Only handle j navigation in Normal mode
+                if !self.is_current_editor_in_insert_mode() {
+                    if self.handle_j_navigation() {
+                        Ok(true)
+                    } else {
+                        // Let editor handle the key (move down within multiline field)
+                        self.handle_input_key_event(key_event)?;
+                        Ok(true)
+                    }
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('k') => {
+                // Only handle k navigation in Normal mode
+                if !self.is_current_editor_in_insert_mode() {
+                    if self.handle_k_navigation() {
+                        Ok(true)
+                    } else {
+                        // Let editor handle the key (move up within multiline field)
+                        self.handle_input_key_event(key_event)?;
+                        Ok(true)
+                    }
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('g') => {
+                // Only handle g navigation in Normal mode
+                if !self.is_current_editor_in_insert_mode() {
+                    self.navigate_to_first_field_or_line();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('G') => {
+                // Only handle G navigation in Normal mode
+                if !self.is_current_editor_in_insert_mode() {
+                    self.navigate_to_last_field_or_line();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Down => {
+                // Only handle Down navigation in Normal mode (same as j)
+                if !self.is_current_editor_in_insert_mode() {
+                    if self.handle_j_navigation() {
+                        Ok(true)
+                    } else {
+                        // Let editor handle the key (move down within multiline field)
+                        self.handle_input_key_event(key_event)?;
+                        Ok(true)
+                    }
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Up => {
+                // Only handle Up navigation in Normal mode (same as k)
+                if !self.is_current_editor_in_insert_mode() {
+                    if self.handle_k_navigation() {
+                        Ok(true)
+                    } else {
+                        // Let editor handle the key (move up within multiline field)
+                        self.handle_input_key_event(key_event)?;
+                        Ok(true)
+                    }
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
             }
             _ => {
                 self.handle_input_key_event(key_event)?;
@@ -204,7 +495,7 @@ impl Modal for TaskModal {
         const BORDER_INSERT: Color = Color::Green;
         const TEXT_FG: Color = Color::White;
 
-        let popup_area = centered_rect(60, 30, area);
+        let popup_area = centered_rect(60, 40, area);
         frame.render_widget(Clear, popup_area);
 
         let chunks = Layout::default()
@@ -212,6 +503,7 @@ impl Modal for TaskModal {
             .margin(1)
             .constraints([
                 Constraint::Length(3), // Title field
+                Constraint::Length(8), // Description field
                 Constraint::Length(3), // Date field
                 Constraint::Length(3), // Time field
                 Constraint::Min(1),    // Instructions
@@ -243,6 +535,32 @@ impl Modal for TaskModal {
         let title_editor_view = EditorView::new(&mut self.input_title_editor).theme(title_theme);
         frame.render_widget(title_editor_view, title_inner);
 
+        // Description field
+        let description_border_color = if self.current_input_field == InputField::Description
+            && self.is_current_editor_in_insert_mode()
+        {
+            BORDER_INSERT
+        } else {
+            BORDER_NORMAL
+        };
+
+        let description_block = Block::default()
+            .title("Description")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(description_border_color));
+
+        let description_inner = description_block.inner(chunks[1]);
+        frame.render_widget(description_block, chunks[1]);
+
+        let description_theme = if self.current_input_field == InputField::Description {
+            EditorTheme::default().hide_status_line()
+        } else {
+            EditorTheme::default().hide_status_line().hide_cursor()
+        };
+        let description_editor_view =
+            EditorView::new(&mut self.input_description_editor).theme(description_theme);
+        frame.render_widget(description_editor_view, description_inner);
+
         // Date field
         let date_border_color = if self.current_input_field == InputField::Date
             && self.is_current_editor_in_insert_mode()
@@ -257,8 +575,8 @@ impl Modal for TaskModal {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(date_border_color));
 
-        let date_inner = date_block.inner(chunks[1]);
-        frame.render_widget(date_block, chunks[1]);
+        let date_inner = date_block.inner(chunks[2]);
+        frame.render_widget(date_block, chunks[2]);
 
         let date_theme = if self.current_input_field == InputField::Date {
             EditorTheme::default().hide_status_line()
@@ -282,8 +600,8 @@ impl Modal for TaskModal {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(time_border_color));
 
-        let time_inner = time_block.inner(chunks[2]);
-        frame.render_widget(time_block, chunks[2]);
+        let time_inner = time_block.inner(chunks[3]);
+        frame.render_widget(time_block, chunks[3]);
 
         let time_theme = if self.current_input_field == InputField::Time {
             EditorTheme::default().hide_status_line()
@@ -329,7 +647,7 @@ impl Modal for TaskModal {
         .wrap(Wrap { trim: true })
         .style(Style::default().fg(TEXT_FG));
 
-        frame.render_widget(instructions, chunks[3]);
+        frame.render_widget(instructions, chunks[4]);
 
         // Render the modal border
         let modal_block = Block::default()
@@ -343,6 +661,7 @@ impl Modal for TaskModal {
     fn get_values(&self) -> Vec<String> {
         vec![
             self.get_input_value(),
+            self.get_input_description(),
             self.get_input_date(),
             self.get_input_time(),
         ]
@@ -350,6 +669,7 @@ impl Modal for TaskModal {
 
     fn clear_inputs(&mut self) {
         self.input_title_editor = EditorState::default();
+        self.input_description_editor = EditorState::default();
         self.input_date_editor = EditorState::default();
         self.input_time_editor = EditorState::default();
         self.current_input_field = InputField::Title;
@@ -360,10 +680,13 @@ impl Modal for TaskModal {
             self.input_title_editor = EditorState::new(Lines::from(values[0].clone()));
         }
         if values.len() >= 2 && !values[1].is_empty() {
-            self.input_date_editor = EditorState::new(Lines::from(values[1].clone()));
+            self.input_description_editor = EditorState::new(Lines::from(values[1].clone()));
         }
         if values.len() >= 3 && !values[2].is_empty() {
-            self.input_time_editor = EditorState::new(Lines::from(values[2].clone()));
+            self.input_date_editor = EditorState::new(Lines::from(values[2].clone()));
+        }
+        if values.len() >= 4 && !values[3].is_empty() {
+            self.input_time_editor = EditorState::new(Lines::from(values[3].clone()));
         }
     }
 }

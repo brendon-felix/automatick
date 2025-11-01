@@ -24,6 +24,10 @@ pub enum Action {
     SelectPrevious,
     /// Move selection down
     SelectNext,
+    /// Move selection up with cycling
+    SelectPreviousCycling,
+    /// Move selection down with cycling
+    SelectNextCycling,
     /// Move to first item
     SelectFirst,
     /// Move to last item

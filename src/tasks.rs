@@ -168,7 +168,7 @@ pub async fn create_task(
     client: &TickTick,
     title: String,
     project: Option<ProjectID>,
-    _content: Option<String>,
+    content: Option<String>,
     _description: Option<String>,
     _priority: Option<TaskPriority>,
     date: Option<NaiveDate>,
@@ -177,6 +177,10 @@ pub async fn create_task(
     let mut builder = ticks::tasks::Task::builder(client, &title);
     let project_id = project.unwrap_or(ProjectID("inbox".to_string()));
     builder = builder.project_id(project_id);
+
+    if let Some(c) = content {
+        builder = builder.content(&c);
+    }
 
     if let Some(d) = date {
         let datetime = if let Some(t) = time {
@@ -201,7 +205,7 @@ pub async fn edit_task(
     task: &mut Task,
     title: Option<String>,
     project: Option<ProjectID>,
-    _content: Option<String>,
+    content: Option<String>,
     _description: Option<String>,
     _priority: Option<TaskPriority>,
     date: Option<NaiveDate>,
@@ -212,6 +216,9 @@ pub async fn edit_task(
     }
     if let Some(p) = project {
         task.project_id = p;
+    }
+    if let Some(c) = content {
+        task.content = c;
     }
     if let Some(d) = date {
         let datetime = if let Some(t) = time {
