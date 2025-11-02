@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::{DateTime, Local};
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use std::sync::{Arc, Mutex};
@@ -42,17 +43,17 @@ pub struct App {
     pub pending_tasks: Arc<Mutex<Option<(Vec<Task>, Vec<Task>, Vec<Task>)>>>,
     pub current_tab: ViewTab,
     pub editing_task: Option<(ProjectID, TaskID)>,
+    pub task_editor_focused: bool,
 }
 
 impl App {
-    pub fn new(client: TickTick) -> Result<Self> {
-        let mode = Mode::Normal;
+    pub fn new(client: Arc<TickTick>) -> Result<Self> {
         let ui = TaskListUI::new();
         Ok(Self {
             should_quit: false,
-            mode,
+            mode: Mode::Normal,
             ui,
-            client: Arc::new(client),
+            client,
             error_message: None,
             error_ticks: 0,
             today_cache: Vec::new(),
@@ -62,6 +63,7 @@ impl App {
             pending_tasks: Arc::new(Mutex::new(None)),
             current_tab: ViewTab::Today,
             editing_task: None,
+            task_editor_focused: false,
         })
     }
 
@@ -98,24 +100,62 @@ impl App {
                     Action::Error(msg) => self.error(msg),
                     Action::ToggleHelp => self.toggle_help(),
 
-                    Action::SelectPrevious => self.ui.select_previous(),
-                    Action::SelectNext => self.ui.select_next(),
+                    Action::SelectPrevious => {
+                        self.save_task_before_changing_selection(action_tx.clone());
+                        let current_tab = self.ui.current_tab;
+                        let tasks = self.get_view_tasks(current_tab);
+                        self.ui.select_previous(tasks.len());
+                        self.sync_task_editor_with_selection();
+                    }
+                    Action::SelectNext => {
+                        self.save_task_before_changing_selection(action_tx.clone());
+                        let current_tab = self.ui.current_tab;
+                        let tasks = self.get_view_tasks(current_tab);
+                        self.ui.select_next(tasks.len());
+                        self.sync_task_editor_with_selection();
+                    }
                     Action::SelectPreviousCycling => {
+                        self.save_task_before_changing_selection(action_tx.clone());
                         let current_tab = self.ui.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
                         self.ui.select_previous_cycling(tasks.len());
+                        self.sync_task_editor_with_selection();
                     }
                     Action::SelectNextCycling => {
+                        self.save_task_before_changing_selection(action_tx.clone());
                         let current_tab = self.ui.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
                         self.ui.select_next_cycling(tasks.len());
+                        self.sync_task_editor_with_selection();
                     }
-                    Action::SelectFirst => self.ui.select_first(),
-                    Action::SelectLast => self.ui.select_last(),
-                    Action::SelectNone => self.ui.select_none(),
+                    Action::SelectFirst => {
+                        self.save_task_before_changing_selection(action_tx.clone());
+                        let current_tab = self.ui.current_tab;
+                        let tasks = self.get_view_tasks(current_tab);
+                        self.ui.select_first(tasks.len());
+                        self.sync_task_editor_with_selection();
+                    }
+                    Action::SelectLast => {
+                        self.save_task_before_changing_selection(action_tx.clone());
+                        let current_tab = self.ui.current_tab;
+                        let tasks = self.get_view_tasks(current_tab);
+                        self.ui.select_last(tasks.len());
+                        self.sync_task_editor_with_selection();
+                    }
+                    Action::SelectNone => {
+                        self.save_task_before_changing_selection(action_tx.clone());
+                        self.ui.select_none();
+                        self.sync_task_editor_with_selection();
+                    }
 
-                    Action::PreviousTab => self.previous_tab(),
-                    Action::NextTab => self.next_tab(),
+                    Action::PreviousTab => {
+                        self.save_task_before_changing_selection(action_tx.clone());
+                        self.previous_tab();
+                    }
+                    Action::NextTab => {
+                        self.save_task_before_changing_selection(action_tx.clone());
+                        self.next_tab();
+                    }
 
                     Action::CompleteTask => self.complete_task(action_tx.clone()),
                     Action::StartCompleteTask => self.start_complete_task(),
@@ -144,6 +184,9 @@ impl App {
                         self.mode = Mode::Normal;
                         self.ui.exit_visual_mode();
                     }
+
+                    Action::EnterTaskEditor => self.enter_task_editor(),
+                    Action::ExitTaskEditor => self.exit_task_editor(action_tx.clone()),
 
                     Action::TaskOperationComplete => todo!(),
                     Action::TasksFetched => self.tasks_fetched(),
@@ -189,6 +232,7 @@ impl App {
             ViewTab::Inbox => &self.inbox_cache,
         };
         self.ui.set_tasks(current_tasks);
+        self.sync_task_editor_with_selection();
     }
 
     fn error(&mut self, msg: String) {
@@ -220,7 +264,15 @@ impl App {
         let tasks_loaded = self.tasks_loaded;
         let ui = &mut self.ui;
         tui.draw(|f| {
-            let _ = ui.draw(f, f.area(), mode, tasks, error_message, tasks_loaded);
+            let _ = ui.draw(
+                f,
+                f.area(),
+                mode,
+                tasks,
+                error_message,
+                tasks_loaded,
+                self.task_editor_focused,
+            );
         })
     }
 
@@ -484,6 +536,15 @@ impl App {
         }
     }
     fn confirm_input(&mut self, tx: UnboundedSender<Action>) {
+        // Handle task editor save
+        if self.task_editor_focused {
+            // Only save if there are actual changes
+            if self.ui.task_editor.has_changes() {
+                self.save_task_from_editor(tx);
+            }
+            return;
+        }
+
         // Handle confirmation modal (for delete or complete confirmation)
         if self.ui.has_modal() && self.mode != Mode::Insert {
             // Check what type of confirmation modal this is
@@ -762,6 +823,7 @@ impl App {
             ViewTab::Week => self.ui.set_tasks(&self.week_cache),
             ViewTab::Inbox => self.ui.set_tasks(&self.inbox_cache),
         }
+        self.sync_task_editor_with_selection();
     }
 
     fn previous_tab(&mut self) {
@@ -772,6 +834,7 @@ impl App {
             ViewTab::Week => self.ui.set_tasks(&self.week_cache),
             ViewTab::Inbox => self.ui.set_tasks(&self.inbox_cache),
         }
+        self.sync_task_editor_with_selection();
     }
 
     fn toggle_help(&mut self) {
@@ -779,6 +842,160 @@ impl App {
             self.mode = Mode::Normal;
         } else {
             self.mode = Mode::Help;
+        }
+    }
+
+    fn sync_task_editor_with_selection(&mut self) {
+        if let Some(selected_index) = self.ui.selected_index() {
+            let tasks = match self.current_tab {
+                ViewTab::Today => &self.today_cache,
+                ViewTab::Week => &self.week_cache,
+                ViewTab::Inbox => &self.inbox_cache,
+            };
+            if let Some(task) = tasks.get(selected_index) {
+                let date_str = if task.due_date.timestamp() > 0 {
+                    let local: DateTime<Local> = task.due_date.with_timezone(&Local);
+                    local.format("%m/%d/%Y").to_string()
+                } else {
+                    String::new()
+                };
+                let time_str = if task.due_date.timestamp() > 0 && !task.is_all_day {
+                    let local: DateTime<Local> = task.due_date.with_timezone(&Local);
+                    local.format("%I:%M %p").to_string()
+                } else {
+                    String::new()
+                };
+                self.ui
+                    .task_editor
+                    .set_values(&task.title, &task.content, &date_str, &time_str);
+                self.ui.task_editor.is_edit_mode = true;
+            } else {
+                // Clear editor fields when selected index is out of range
+                self.ui.task_editor.set_values("", "", "", "");
+                self.ui.task_editor.is_edit_mode = false;
+            }
+        } else {
+            // Clear editor fields when no task is selected
+            self.ui.task_editor.set_values("", "", "", "");
+            self.ui.task_editor.is_edit_mode = false;
+        }
+    }
+
+    fn enter_task_editor(&mut self) {
+        if self.ui.selected_index().is_some() {
+            self.task_editor_focused = true;
+            // Task data is already synced by sync_task_editor_with_selection
+        }
+    }
+
+    fn save_task_before_changing_selection(&mut self, tx: UnboundedSender<Action>) {
+        // Only save if we're currently focused on the task editor and have valid input and changes
+        if self.task_editor_focused {
+            if self.ui.task_editor.validate() && self.ui.task_editor.has_changes() {
+                self.save_task_from_editor(tx);
+            }
+            // Note: If validation fails or no changes, we still allow the selection change
+            // but don't save invalid data or unchanged data
+        }
+    }
+
+    fn exit_task_editor(&mut self, tx: UnboundedSender<Action>) {
+        // Validate before saving changes
+        if self.ui.task_editor.validate() {
+            // Valid input - check if there are changes to save
+            if self.ui.task_editor.has_changes() {
+                self.save_task_from_editor(tx);
+            }
+            self.task_editor_focused = false;
+            self.mode = Mode::Normal;
+        } else {
+            // Validation failed - stay in editor to let user see errors and fix them
+            // The validation method has already set the error messages which will be displayed
+        }
+    }
+
+    fn save_task_from_editor(&mut self, tx: UnboundedSender<Action>) {
+        if let Some(selected_index) = self.ui.selected_index() {
+            let tasks = match self.current_tab {
+                ViewTab::Today => &self.today_cache,
+                ViewTab::Week => &self.week_cache,
+                ViewTab::Inbox => &self.inbox_cache,
+            };
+
+            if let Some(task) = tasks.get(selected_index) {
+                let task_id = task.get_id().clone();
+                let project_id = task.project_id.clone();
+
+                let title = self.ui.task_editor.get_input_title();
+                let description = self.ui.task_editor.get_input_description();
+                let date_str = self.ui.task_editor.get_input_date();
+                let time_str = self.ui.task_editor.get_input_time();
+
+                // Parse date and time
+                let parsed_date = if !date_str.trim().is_empty() {
+                    parse_date_us_format(&date_str).ok()
+                } else {
+                    None
+                };
+
+                let parsed_time = if !time_str.trim().is_empty() {
+                    parse_time_us_format(&time_str).ok()
+                } else {
+                    None
+                };
+
+                let client = Arc::clone(&self.client);
+                self.mode = Mode::Processing;
+                self.task_editor_focused = false;
+
+                tokio::spawn(async move {
+                    // Get fresh task data
+                    match client.get_project_data(&project_id).await {
+                        Ok(project_data) => {
+                            let task_id_str = format!("{:?}", task_id);
+                            if let Some(mut task) = project_data.tasks.into_iter().find(|t| {
+                                let t_id_str = format!("{:?}", t.get_id());
+                                t_id_str == task_id_str
+                            }) {
+                                let result = tasks::edit_task(
+                                    &mut task,
+                                    if !title.trim().is_empty() {
+                                        Some(title)
+                                    } else {
+                                        None
+                                    },
+                                    None, // project
+                                    if !description.trim().is_empty() {
+                                        Some(description)
+                                    } else {
+                                        None
+                                    },
+                                    None, // description (legacy)
+                                    None, // priority
+                                    parsed_date,
+                                    parsed_time,
+                                )
+                                .await;
+
+                                if let Err(e) = result {
+                                    let _ = tx.send(Action::Error(e));
+                                } else {
+                                    let _ = tx.send(Action::RefreshTasks);
+                                }
+                            } else {
+                                let _ = tx.send(Action::Error("Task not found".to_string()));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Error(format!(
+                                "Failed to get project data: {:?}",
+                                e
+                            )));
+                        }
+                    }
+                    let _ = tx.send(Action::ExitProcessing);
+                });
+            }
         }
     }
 
@@ -809,96 +1026,313 @@ impl App {
         }
 
         match self.mode {
-            Mode::Normal => match key.code {
-                KeyCode::Char('q') => action_tx.send(Action::Quit)?,
-                KeyCode::Esc => action_tx.send(Action::SelectNone)?,
-                KeyCode::Char('r') => action_tx.send(Action::RefreshTasks)?,
-                KeyCode::Char('n') => action_tx.send(Action::StartCreateTask)?,
-                KeyCode::Char('e') => action_tx.send(Action::StartCompleteTask)?,
-                KeyCode::Char('d') => action_tx.send(Action::StartDeleteTask)?,
-                KeyCode::Char('p') => {
-                    if key
-                        .modifiers
-                        .contains(crossterm::event::KeyModifiers::CONTROL)
-                        || key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::SUPER)
-                    {
-                        action_tx.send(Action::StartPostponeTask)?
-                    }
-                }
-                KeyCode::Char('?') => action_tx.send(Action::ToggleHelp)?,
-                KeyCode::Char('j') | KeyCode::Down => action_tx.send(Action::SelectNextCycling)?,
-                KeyCode::Char('k') | KeyCode::Up => {
-                    action_tx.send(Action::SelectPreviousCycling)?
-                }
-                KeyCode::Tab => action_tx.send(Action::SelectNextCycling)?,
-                KeyCode::BackTab => action_tx.send(Action::SelectPreviousCycling)?,
-                KeyCode::Char('g') | KeyCode::Home => action_tx.send(Action::SelectFirst)?,
-                KeyCode::Char('G') | KeyCode::End => action_tx.send(Action::SelectLast)?,
-                KeyCode::Char('h') | KeyCode::Left => action_tx.send(Action::PreviousTab)?,
-                KeyCode::Char('l') | KeyCode::Right => action_tx.send(Action::NextTab)?,
+            Mode::Normal => {
+                if self.task_editor_focused {
+                    // Handle keys when task editor is focused
+                    match key.code {
+                        KeyCode::Char('q') => action_tx.send(Action::Quit)?,
+                        KeyCode::Esc => {
+                            // Check current editor mode before handling Esc
+                            let editor = match self.ui.task_editor.current_input_field {
+                                crate::ui::InputField::Title => {
+                                    &self.ui.task_editor.input_title_editor
+                                }
+                                crate::ui::InputField::Description => {
+                                    &self.ui.task_editor.input_description_editor
+                                }
+                                crate::ui::InputField::Date => {
+                                    &self.ui.task_editor.input_date_editor
+                                }
+                                crate::ui::InputField::Time => {
+                                    &self.ui.task_editor.input_time_editor
+                                }
+                            };
 
-                KeyCode::Enter => action_tx.send(Action::StartEditTask)?,
-                KeyCode::Char('v') => action_tx.send(Action::EnterVisual)?,
-                _ => {}
-            },
-            Mode::Insert => {
-                // Check for special keys first
-                match key.code {
-                    KeyCode::Esc => {
-                        // If there's a modal, let it handle the Esc key first
-                        if self.ui.has_modal() {
-                            // Pass Esc to modal - it will return false if it wants the app to handle it
-                            let handled = self.ui.handle_modal_key_event(key).unwrap_or(false);
-                            if !handled {
-                                // Modal didn't handle it (already in normal mode), close the modal
-                                action_tx.send(Action::CancelInput)?;
+                            // If in Insert, Visual, or Search mode, let edtui handle Esc
+                            if editor.mode != edtui::EditorMode::Normal {
+                                let _ = self.ui.task_editor.handle_input_key_event(key);
+                            } else {
+                                // Already in Normal mode, exit task editor
+                                action_tx.send(Action::ExitTaskEditor)?
                             }
-                        } else {
-                            // No overlay system anymore, should always have modal in Insert mode
-                            action_tx.send(Action::CancelInput)?;
                         }
-                    }
-                    KeyCode::Enter => {
-                        // Cmd+Enter or Ctrl+Enter always confirms
-                        if key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                            || key
-                                .modifiers
-                                .contains(crossterm::event::KeyModifiers::SUPER)
-                        {
-                            action_tx.send(Action::ConfirmInput)?;
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            // Try edtui first, fallback to pane navigation if at line start
+                            if self.ui.task_editor.is_at_line_start() {
+                                action_tx.send(Action::ExitTaskEditor)?
+                            } else {
+                                let _ = self.ui.task_editor.handle_input_key_event(key);
+                                // Update desired column after horizontal movement
+                                self.ui.task_editor.update_desired_column();
+                            }
                         }
-                        // For modals, pass Enter to the modal to handle
-                        else {
-                            if self.ui.has_modal() {
-                                // Pass Enter to modal - it will return false if it wants the app to handle it
-                                let handled = self.ui.handle_modal_key_event(key).unwrap_or(false);
-                                if !handled {
-                                    // Modal didn't handle it (in normal mode), confirm the input
+                        KeyCode::Char('l') | KeyCode::Right => {
+                            // Always let edtui handle 'l' - it handles cursor movement within fields
+                            let _ = self.ui.task_editor.handle_input_key_event(key);
+                            // Update desired column after horizontal movement
+                            self.ui.task_editor.update_desired_column();
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            // Check if current editor is in insert mode first
+                            if self.ui.task_editor.is_current_editor_in_insert_mode() {
+                                // In insert mode, just let edtui handle it normally (insert 'j' character)
+                                let _ = self.ui.task_editor.handle_input_key_event(key);
+                            } else {
+                                // In normal mode, handle navigation logic
+                                // Handle j: try moving within multi-line field first, then between fields
+                                if self.ui.task_editor.current_input_field
+                                    == crate::ui::InputField::Description
+                                    && !self.ui.task_editor.is_at_last_line_in_multiline_field()
+                                {
+                                    // Let edtui handle line movement within description
+                                    let _ = self.ui.task_editor.handle_input_key_event(key);
+                                    // Update desired column after vertical movement within same field
+                                    self.ui.task_editor.update_desired_column();
+                                } else {
+                                    // Move to next field
+                                    if !self.ui.task_editor.handle_j_navigation() {
+                                        let _ = self.ui.task_editor.handle_input_key_event(key);
+                                        self.ui.task_editor.update_desired_column();
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            // Check if current editor is in insert mode first
+                            if self.ui.task_editor.is_current_editor_in_insert_mode() {
+                                // In insert mode, just let edtui handle it normally (insert 'k' character)
+                                let _ = self.ui.task_editor.handle_input_key_event(key);
+                            } else {
+                                // In normal mode, handle navigation logic
+                                // Handle k: try moving within multi-line field first, then between fields
+                                if self.ui.task_editor.current_input_field
+                                    == crate::ui::InputField::Description
+                                    && !self.ui.task_editor.is_at_first_line_in_multiline_field()
+                                {
+                                    // Let edtui handle line movement within description
+                                    let _ = self.ui.task_editor.handle_input_key_event(key);
+                                    // Update desired column after vertical movement within same field
+                                    self.ui.task_editor.update_desired_column();
+                                } else {
+                                    // Move to previous field
+                                    if !self.ui.task_editor.handle_k_navigation() {
+                                        let _ = self.ui.task_editor.handle_input_key_event(key);
+                                        self.ui.task_editor.update_desired_column();
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            // For description field, let edtui handle Enter (newline)
+                            // For other fields, save the task
+                            match self.ui.task_editor.current_input_field {
+                                crate::ui::InputField::Description => {
+                                    let _ = self.ui.task_editor.handle_input_key_event(key);
+                                }
+                                _ => {
                                     action_tx.send(Action::ConfirmInput)?;
                                 }
                             }
                         }
-                    }
-                    _ => {
-                        if self.mode == Mode::Insert {
-                            if self.ui.has_modal() {
-                                let _ = self.ui.handle_modal_key_event(key);
+                        KeyCode::Tab => {
+                            self.ui.task_editor.next_input_field();
+                            self.ui.task_editor.position_cursor_at_desired_column();
+                        }
+                        KeyCode::BackTab => {
+                            self.ui.task_editor.previous_input_field();
+                            self.ui.task_editor.position_cursor_at_desired_column();
+                        }
+                        KeyCode::Char('g') => {
+                            // Check if current editor is in insert mode first
+                            if self.ui.task_editor.is_current_editor_in_insert_mode() {
+                                // In insert mode, just let edtui handle it normally (insert 'g' character)
+                                let _ = self.ui.task_editor.handle_input_key_event(key);
+                            } else {
+                                // In normal mode, move to first line of first field or first line of current field if in description
+                                self.ui.task_editor.navigate_to_first_field_or_line();
                             }
-                            // No overlay system anymore
+                        }
+                        KeyCode::Char('G') => {
+                            // Check if current editor is in insert mode first
+                            if self.ui.task_editor.is_current_editor_in_insert_mode() {
+                                // In insert mode, just let edtui handle it normally (insert 'G' character)
+                                let _ = self.ui.task_editor.handle_input_key_event(key);
+                            } else {
+                                // In normal mode, move to last line of last field or last line of current field if in description
+                                self.ui.task_editor.navigate_to_last_field_or_line();
+                            }
+                        }
+                        KeyCode::Char('s') => {
+                            // Ctrl+S saves the task
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL)
+                            {
+                                action_tx.send(Action::ConfirmInput)?;
+                            } else {
+                                // Regular 's' command - let edtui handle it
+                                let _ = self.ui.task_editor.handle_input_key_event(key);
+                                self.ui.task_editor.update_desired_column();
+                            }
+                        }
+                        _ => {
+                            // Handle different types of keys for proper desired column behavior
+                            match key.code {
+                                // Keys that should preserve desired column (vertical movement)
+                                KeyCode::Up | KeyCode::Down => {
+                                    let _ = self.ui.task_editor.handle_input_key_event(key);
+                                    // Don't update desired_column for pure vertical movement
+                                }
+                                // Keys that should update desired column (horizontal movement, word movement, etc.)
+                                KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+                                    let _ = self.ui.task_editor.handle_input_key_event(key);
+                                    self.ui.task_editor.update_desired_column();
+                                }
+                                // Character keys like 'w', 'b', 'e', '0', '$', etc.
+                                KeyCode::Char(c) => match c {
+                                    // Horizontal movement commands that should update desired column
+                                    'w' | 'b' | 'e' | '0' | '$' | '_' | 'f' | 'F' | 't' | 'T' => {
+                                        let _ = self.ui.task_editor.handle_input_key_event(key);
+                                        self.ui.task_editor.update_desired_column();
+                                    }
+                                    // Commands that change to insert mode and should update desired column
+                                    'i' | 'a' | 'I' | 'A' | 'c' | 's' | 'x' | 'r' => {
+                                        let _ = self.ui.task_editor.handle_input_key_event(key);
+                                        self.ui.task_editor.update_desired_column();
+                                    }
+                                    // Vertical movement commands that should preserve desired column
+                                    'j' | 'k' => {
+                                        let _ = self.ui.task_editor.handle_input_key_event(key);
+                                        // Don't update desired_column for these
+                                    }
+                                    // All other character commands
+                                    _ => {
+                                        let _ = self.ui.task_editor.handle_input_key_event(key);
+                                        // For safety, update desired column for unknown commands
+                                        self.ui.task_editor.update_desired_column();
+                                    }
+                                },
+                                // For other keys, use the safe method that updates desired column
+                                _ => {
+                                    let _ = self
+                                        .ui
+                                        .task_editor
+                                        .handle_input_key_event_and_update_column(key);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Handle keys when task list is focused
+                    match key.code {
+                        KeyCode::Char('q') => action_tx.send(Action::Quit)?,
+                        KeyCode::Esc => action_tx.send(Action::SelectNone)?,
+                        KeyCode::Char('r') => action_tx.send(Action::RefreshTasks)?,
+                        KeyCode::Char('n') => action_tx.send(Action::StartCreateTask)?,
+                        KeyCode::Char('e') => action_tx.send(Action::StartCompleteTask)?,
+                        KeyCode::Char('d') => action_tx.send(Action::StartDeleteTask)?,
+                        KeyCode::Char('p') => {
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL)
+                                || key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::SUPER)
+                            {
+                                action_tx.send(Action::StartPostponeTask)?
+                            }
+                        }
+                        KeyCode::Char('?') => action_tx.send(Action::ToggleHelp)?,
+                        KeyCode::Char('j') => action_tx.send(Action::SelectNext)?,
+                        KeyCode::Char('k') => action_tx.send(Action::SelectPrevious)?,
+                        KeyCode::Down => action_tx.send(Action::SelectNextCycling)?,
+                        KeyCode::Up => action_tx.send(Action::SelectPreviousCycling)?,
+                        KeyCode::Char('g') | KeyCode::Home => {
+                            action_tx.send(Action::SelectFirst)?
+                        }
+                        KeyCode::Char('G') | KeyCode::End => action_tx.send(Action::SelectLast)?,
+
+                        // Tab/BackTab now switch tabs
+                        KeyCode::Tab => action_tx.send(Action::NextTab)?,
+                        KeyCode::BackTab => action_tx.send(Action::PreviousTab)?,
+
+                        // 'l' enters task editor when task is selected
+                        KeyCode::Char('l') | KeyCode::Right => {
+                            if self.ui.selected_index().is_some() {
+                                action_tx.send(Action::EnterTaskEditor)?;
+                            }
+                        }
+
+                        KeyCode::Enter => action_tx.send(Action::StartEditTask)?,
+                        KeyCode::Char('v') => action_tx.send(Action::EnterVisual)?,
+                        _ => {}
+                    }
+                }
+            }
+            Mode::Insert => {
+                if self.task_editor_focused {
+                    // Task editor handles its own modes via edtui - we should not reach here
+                    // All task editor keys are handled in Normal mode now
+                    // This is a fallback for safety
+                    let _ = self.ui.task_editor.handle_input_key_event(key);
+                } else {
+                    // Handle modal insert mode
+                    match key.code {
+                        KeyCode::Esc => {
+                            // If there's a modal, let it handle the Esc key first
+                            if self.ui.has_modal() {
+                                // Pass Esc to modal - it will return false if it wants the app to handle it
+                                let handled = self.ui.handle_modal_key_event(key).unwrap_or(false);
+                                if !handled {
+                                    // Modal didn't handle it (already in normal mode), close the modal
+                                    action_tx.send(Action::CancelInput)?;
+                                }
+                            } else {
+                                // No overlay system anymore, should always have modal in Insert mode
+                                action_tx.send(Action::CancelInput)?;
+                            }
+                        }
+                        KeyCode::Enter => {
+                            // Cmd+Enter or Ctrl+Enter always confirms
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL)
+                                || key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::SUPER)
+                            {
+                                action_tx.send(Action::ConfirmInput)?;
+                            }
+                            // For modals, pass Enter to the modal to handle
+                            else {
+                                if self.ui.has_modal() {
+                                    // Pass Enter to modal - it will return false if it wants the app to handle it
+                                    let handled =
+                                        self.ui.handle_modal_key_event(key).unwrap_or(false);
+                                    if !handled {
+                                        // Modal didn't handle it (in normal mode), confirm the input
+                                        action_tx.send(Action::ConfirmInput)?;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            if self.mode == Mode::Insert {
+                                if self.ui.has_modal() {
+                                    let _ = self.ui.handle_modal_key_event(key);
+                                }
+                                // No overlay system anymore
+                            }
                         }
                     }
                 }
             }
             Mode::Visual => match key.code {
                 KeyCode::Esc => action_tx.send(Action::EnterNormal)?,
-                KeyCode::Char('j') | KeyCode::Down => action_tx.send(Action::SelectNextCycling)?,
-                KeyCode::Char('k') | KeyCode::Up => {
-                    action_tx.send(Action::SelectPreviousCycling)?
-                }
+                KeyCode::Char('j') => action_tx.send(Action::SelectNext)?,
+                KeyCode::Char('k') => action_tx.send(Action::SelectPrevious)?,
+                KeyCode::Down => action_tx.send(Action::SelectNextCycling)?,
+                KeyCode::Up => action_tx.send(Action::SelectPreviousCycling)?,
                 KeyCode::Tab => action_tx.send(Action::SelectNextCycling)?,
                 KeyCode::BackTab => action_tx.send(Action::SelectPreviousCycling)?,
                 KeyCode::Char('g') | KeyCode::Home => action_tx.send(Action::SelectFirst)?,

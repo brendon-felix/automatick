@@ -73,6 +73,12 @@ pub enum Action {
     /// Exit processing mode
     ExitProcessing,
 
+    // Task editor pane navigation
+    /// Enter task editor pane (focus on right pane)
+    EnterTaskEditor,
+    /// Exit task editor pane (focus back on task list)
+    ExitTaskEditor,
+
     // Task updates
     /// Task operation completed successfully
     TaskOperationComplete,

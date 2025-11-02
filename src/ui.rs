@@ -1,11 +1,12 @@
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use crossterm::event::KeyEvent;
+use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, Lines};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph},
 };
 use ticks::tasks::{Task, TaskPriority};
 
@@ -31,11 +32,405 @@ pub enum InputField {
     Time,
 }
 
+pub struct TaskEditor {
+    pub input_title_editor: EditorState,
+    pub input_description_editor: EditorState,
+    pub input_date_editor: EditorState,
+    pub input_time_editor: EditorState,
+    pub current_input_field: InputField,
+    pub event_handler: EditorEventHandler,
+    pub is_edit_mode: bool,
+    pub desired_column: usize,
+    // Validation state
+    pub validation_attempted: bool,
+    pub date_error: Option<String>,
+    pub time_error: Option<String>,
+    // Original values for change detection
+    pub original_title: String,
+    pub original_description: String,
+    pub original_date: String,
+    pub original_time: String,
+}
+
 pub struct TaskListUI {
     state: ListState,
     pub current_tab: ViewTab,
     pub visual_range: Option<(usize, usize)>,
     pub current_modal: Option<Box<dyn Modal>>,
+    pub task_editor: TaskEditor,
+}
+
+impl TaskEditor {
+    pub fn new() -> Self {
+        Self {
+            input_title_editor: EditorState::default(),
+            input_description_editor: EditorState::default(),
+            input_date_editor: EditorState::default(),
+            input_time_editor: EditorState::default(),
+            current_input_field: InputField::Title,
+            event_handler: EditorEventHandler::default(),
+            is_edit_mode: false,
+            desired_column: 0,
+            validation_attempted: false,
+            date_error: None,
+            time_error: None,
+            original_title: String::new(),
+            original_description: String::new(),
+            original_date: String::new(),
+            original_time: String::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_inputs(&mut self) {
+        self.input_title_editor = EditorState::default();
+        self.input_description_editor = EditorState::default();
+        self.input_date_editor = EditorState::default();
+        self.input_time_editor = EditorState::default();
+        self.current_input_field = InputField::Title;
+        self.validation_attempted = false;
+        self.date_error = None;
+        self.time_error = None;
+        self.original_title = String::new();
+        self.original_description = String::new();
+        self.original_date = String::new();
+        self.original_time = String::new();
+    }
+
+    pub fn set_values(&mut self, title: &str, description: &str, date: &str, time: &str) {
+        self.input_title_editor = EditorState::new(Lines::from(title.to_string()));
+        self.input_description_editor = EditorState::new(Lines::from(description.to_string()));
+        self.input_date_editor = EditorState::new(Lines::from(date.to_string()));
+        self.input_time_editor = EditorState::new(Lines::from(time.to_string()));
+
+        // Store original values for change detection
+        self.original_title = title.to_string();
+        self.original_description = description.to_string();
+        self.original_date = date.to_string();
+        self.original_time = time.to_string();
+    }
+
+    pub fn get_current_editor_mut(&mut self) -> &mut EditorState {
+        match self.current_input_field {
+            InputField::Title => &mut self.input_title_editor,
+            InputField::Description => &mut self.input_description_editor,
+            InputField::Date => &mut self.input_date_editor,
+            InputField::Time => &mut self.input_time_editor,
+        }
+    }
+
+    pub fn next_input_field(&mut self) {
+        self.current_input_field = match self.current_input_field {
+            InputField::Title => InputField::Description,
+            InputField::Description => InputField::Date,
+            InputField::Date => InputField::Time,
+            InputField::Time => InputField::Title,
+        };
+    }
+
+    pub fn previous_input_field(&mut self) {
+        self.current_input_field = match self.current_input_field {
+            InputField::Title => InputField::Time,
+            InputField::Description => InputField::Title,
+            InputField::Date => InputField::Description,
+            InputField::Time => InputField::Date,
+        };
+    }
+
+    pub fn is_current_editor_in_insert_mode(&self) -> bool {
+        let editor = match self.current_input_field {
+            InputField::Title => &self.input_title_editor,
+            InputField::Description => &self.input_description_editor,
+            InputField::Date => &self.input_date_editor,
+            InputField::Time => &self.input_time_editor,
+        };
+        editor.mode == EditorMode::Insert
+    }
+
+    #[allow(dead_code)]
+    pub fn set_current_editor_to_insert_mode(&mut self) {
+        let editor = self.get_current_editor_mut();
+        editor.mode = EditorMode::Insert;
+    }
+
+    #[allow(dead_code)]
+    pub fn set_current_editor_to_normal_mode(&mut self) {
+        let editor = self.get_current_editor_mut();
+        editor.mode = EditorMode::Normal;
+    }
+
+    pub fn position_cursor_at_end(&mut self) {
+        let editor = self.get_current_editor_mut();
+        if editor.lines.is_empty() {
+            editor.cursor = Index2::new(0, 0);
+            self.desired_column = 0;
+        } else if let Some(last_row_idx) = editor.lines.len().checked_sub(1) {
+            if let Some(last_col) = editor.lines.len_col(last_row_idx) {
+                editor.cursor = Index2::new(last_row_idx, last_col);
+                self.desired_column = last_col;
+            }
+        }
+    }
+
+    pub fn handle_input_key_event(&mut self, key_event: crossterm::event::KeyEvent) -> Result<()> {
+        match self.current_input_field {
+            InputField::Title => {
+                self.event_handler
+                    .on_key_event(key_event, &mut self.input_title_editor);
+            }
+            InputField::Description => {
+                self.event_handler
+                    .on_key_event(key_event, &mut self.input_description_editor);
+            }
+            InputField::Date => {
+                self.event_handler
+                    .on_key_event(key_event, &mut self.input_date_editor);
+            }
+            InputField::Time => {
+                self.event_handler
+                    .on_key_event(key_event, &mut self.input_time_editor);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn handle_input_key_event_and_update_column(
+        &mut self,
+        key_event: crossterm::event::KeyEvent,
+    ) -> Result<()> {
+        self.handle_input_key_event(key_event)?;
+        self.update_desired_column();
+
+        // Clear validation errors when user edits a field
+        if self.validation_attempted {
+            match self.current_input_field {
+                InputField::Date => self.date_error = None,
+                InputField::Time => self.time_error = None,
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn update_desired_column(&mut self) {
+        let editor = match self.current_input_field {
+            InputField::Title => &self.input_title_editor,
+            InputField::Description => &self.input_description_editor,
+            InputField::Date => &self.input_date_editor,
+            InputField::Time => &self.input_time_editor,
+        };
+        self.desired_column = editor.cursor.col;
+    }
+
+    pub fn position_cursor_at_desired_column(&mut self) {
+        let desired_column = self.desired_column;
+        let editor = self.get_current_editor_mut();
+        if let Some(line_len) = editor.lines.len_col(editor.cursor.row) {
+            editor.cursor.col = desired_column.min(line_len);
+        }
+    }
+
+    pub fn is_at_first_line_in_multiline_field(&self) -> bool {
+        match self.current_input_field {
+            InputField::Description => self.input_description_editor.cursor.row == 0,
+            _ => true, // Single-line fields are always at "first line"
+        }
+    }
+
+    pub fn is_at_last_line_in_multiline_field(&self) -> bool {
+        match self.current_input_field {
+            InputField::Description => {
+                let lines_len = self.input_description_editor.lines.len();
+                self.input_description_editor.cursor.row >= lines_len.saturating_sub(1)
+            }
+            _ => true, // Single-line fields are always at "last line"
+        }
+    }
+
+    pub fn navigate_to_first_field_or_line(&mut self) {
+        if self.current_input_field == InputField::Description {
+            // Move to first line in description field
+            let editor = self.get_current_editor_mut();
+            editor.cursor.row = 0;
+            self.position_cursor_at_desired_column();
+        } else {
+            // Move to first field
+            self.current_input_field = InputField::Title;
+            self.position_cursor_at_end();
+        }
+    }
+
+    pub fn navigate_to_last_field_or_line(&mut self) {
+        if self.current_input_field == InputField::Description {
+            // Move to last line in description field
+            let editor = self.get_current_editor_mut();
+            let lines_len = editor.lines.len();
+            if lines_len > 0 {
+                editor.cursor.row = lines_len - 1;
+                self.position_cursor_at_desired_column();
+            }
+        } else {
+            // Move to last field
+            self.current_input_field = InputField::Time;
+            self.position_cursor_at_end();
+        }
+    }
+
+    pub fn handle_j_navigation(&mut self) -> bool {
+        if self.current_input_field == InputField::Description
+            && !self.is_at_last_line_in_multiline_field()
+        {
+            // Stay in description field, let editor handle j
+            return false;
+        }
+
+        // Move to next field
+        match self.current_input_field {
+            InputField::Title => {
+                self.current_input_field = InputField::Description;
+                // Set cursor to first row of new field, then position at desired column
+                let editor = self.get_current_editor_mut();
+                editor.cursor.row = 0;
+                self.position_cursor_at_desired_column();
+                true
+            }
+            InputField::Description => {
+                self.current_input_field = InputField::Date;
+                // Set cursor to first row of new field, then position at desired column
+                let editor = self.get_current_editor_mut();
+                editor.cursor.row = 0;
+                self.position_cursor_at_desired_column();
+                true
+            }
+            InputField::Date => {
+                self.current_input_field = InputField::Time;
+                // Set cursor to first row of new field, then position at desired column
+                let editor = self.get_current_editor_mut();
+                editor.cursor.row = 0;
+                self.position_cursor_at_desired_column();
+                true
+            }
+            InputField::Time => {
+                // Don't wrap around, stay at time field
+                true
+            }
+        }
+    }
+
+    pub fn handle_k_navigation(&mut self) -> bool {
+        if self.current_input_field == InputField::Description
+            && !self.is_at_first_line_in_multiline_field()
+        {
+            // Stay in description field, let editor handle k
+            return false;
+        }
+
+        // Move to previous field
+        match self.current_input_field {
+            InputField::Title => {
+                // Don't wrap around, stay at title field
+                true
+            }
+            InputField::Description => {
+                self.current_input_field = InputField::Title;
+                // For single-line fields, position at row 0
+                let editor = self.get_current_editor_mut();
+                editor.cursor.row = 0;
+                self.position_cursor_at_desired_column();
+                true
+            }
+            InputField::Date => {
+                self.current_input_field = InputField::Description;
+                // For description field, go to last line and position at desired column
+                let editor = self.get_current_editor_mut();
+                let lines_len = editor.lines.len();
+                if lines_len > 0 {
+                    editor.cursor.row = lines_len - 1;
+                } else {
+                    editor.cursor.row = 0;
+                }
+                self.position_cursor_at_desired_column();
+                true
+            }
+            InputField::Time => {
+                self.current_input_field = InputField::Date;
+                // For single-line fields, position at row 0
+                let editor = self.get_current_editor_mut();
+                editor.cursor.row = 0;
+                self.position_cursor_at_desired_column();
+                true
+            }
+        }
+    }
+
+    pub fn get_input_title(&self) -> String {
+        String::from(self.input_title_editor.lines.clone())
+    }
+
+    pub fn get_input_description(&self) -> String {
+        String::from(self.input_description_editor.lines.clone())
+    }
+
+    pub fn get_input_date(&self) -> String {
+        String::from(self.input_date_editor.lines.clone())
+    }
+
+    pub fn get_input_time(&self) -> String {
+        String::from(self.input_time_editor.lines.clone())
+    }
+
+    pub fn validate(&mut self) -> bool {
+        use crate::utils::{parse_date_us_format, parse_time_us_format};
+
+        self.validation_attempted = true;
+        let mut is_valid = true;
+
+        // Validate date field (only if not empty)
+        let date_str = self.get_input_date();
+        if !date_str.trim().is_empty() {
+            if let Err(err) = parse_date_us_format(&date_str) {
+                self.date_error = Some(err);
+                is_valid = false;
+            } else {
+                self.date_error = None;
+            }
+        } else {
+            self.date_error = None;
+        }
+
+        // Validate time field (only if not empty)
+        let time_str = self.get_input_time();
+        if !time_str.trim().is_empty() {
+            if let Err(err) = parse_time_us_format(&time_str) {
+                self.time_error = Some(err);
+                is_valid = false;
+            } else {
+                self.time_error = None;
+            }
+        } else {
+            self.time_error = None;
+        }
+
+        is_valid
+    }
+
+    pub fn has_changes(&self) -> bool {
+        self.get_input_title() != self.original_title
+            || self.get_input_description() != self.original_description
+            || self.get_input_date() != self.original_date
+            || self.get_input_time() != self.original_time
+    }
+
+    pub fn is_at_line_start(&self) -> bool {
+        let editor = match self.current_input_field {
+            InputField::Title => &self.input_title_editor,
+            InputField::Description => &self.input_description_editor,
+            InputField::Date => &self.input_date_editor,
+            InputField::Time => &self.input_time_editor,
+        };
+        editor.cursor.col == 0
+    }
 }
 
 impl TaskListUI {
@@ -45,6 +440,7 @@ impl TaskListUI {
             current_tab: ViewTab::Today,
             visual_range: None,
             current_modal: None,
+            task_editor: TaskEditor::new(),
         }
     }
 
@@ -83,15 +479,51 @@ impl TaskListUI {
         self.visual_range = None;
     }
 
-    pub fn select_previous(&mut self) {
-        self.state.select_previous();
+    pub fn select_previous(&mut self, task_count: usize) {
+        // Custom implementation that doesn't deselect at boundaries
+        if task_count == 0 {
+            return;
+        }
+
+        match self.state.selected() {
+            Some(i) => {
+                if i > 0 {
+                    self.state.select(Some(i - 1));
+                }
+                // If i == 0, stay at first item (don't deselect)
+            }
+            None => {
+                // No selection, select last item
+                if task_count > 0 {
+                    self.state.select(Some(task_count - 1));
+                }
+            }
+        }
         if self.visual_range.is_some() {
             self.update_visual_range();
         }
     }
 
-    pub fn select_next(&mut self) {
-        self.state.select_next();
+    pub fn select_next(&mut self, task_count: usize) {
+        // Custom implementation that doesn't deselect at boundaries
+        if task_count == 0 {
+            return;
+        }
+
+        match self.state.selected() {
+            Some(i) => {
+                if i < task_count - 1 {
+                    self.state.select(Some(i + 1));
+                }
+                // If at last item, stay at last item (don't deselect)
+            }
+            None => {
+                // No selection, select first item
+                if task_count > 0 {
+                    self.state.select(Some(0));
+                }
+            }
+        }
         if self.visual_range.is_some() {
             self.update_visual_range();
         }
@@ -147,15 +579,19 @@ impl TaskListUI {
         }
     }
 
-    pub fn select_first(&mut self) {
-        self.state.select_first();
+    pub fn select_first(&mut self, task_count: usize) {
+        if task_count > 0 {
+            self.state.select(Some(0));
+        }
         if self.visual_range.is_some() {
             self.update_visual_range();
         }
     }
 
-    pub fn select_last(&mut self) {
-        self.state.select_last();
+    pub fn select_last(&mut self, task_count: usize) {
+        if task_count > 0 {
+            self.state.select(Some(task_count - 1));
+        }
         if self.visual_range.is_some() {
             self.update_visual_range();
         }
@@ -271,6 +707,7 @@ impl TaskListUI {
         tasks: &[Task],
         error_message: &Option<String>,
         tasks_loaded: bool,
+        task_editor_focused: bool,
     ) -> Result<()> {
         // Set consistent background for entire screen
         let background = Block::default().style(Style::default().bg(NORMAL_BG));
@@ -296,8 +733,15 @@ impl TaskListUI {
             .split(main_chunks[1]);
 
         self.render_header(f, main_chunks[0], mode, error_message);
-        self.render_task_list(f, content_chunks[0], mode, tasks, tasks_loaded);
-        self.render_task_details(f, content_chunks[1], tasks);
+        self.render_task_list(
+            f,
+            content_chunks[0],
+            mode,
+            tasks,
+            tasks_loaded,
+            task_editor_focused,
+        );
+        self.render_task_details(f, content_chunks[1], tasks, task_editor_focused);
         self.render_footer(f, main_chunks[2], mode);
 
         // Render overlays
@@ -388,19 +832,21 @@ impl TaskListUI {
         &mut self,
         f: &mut TuiFrame,
         area: Rect,
-        mode: Mode,
+        _mode: Mode,
         tasks: &[Task],
         tasks_loaded: bool,
+        task_editor_focused: bool,
     ) {
         let tab_name = match self.current_tab {
             ViewTab::Today => "Today",
             ViewTab::Week => "Week",
             ViewTab::Inbox => "Inbox",
         };
-        let border_color = match mode {
-            Mode::Processing => BORDER_PROCESSING,
-            Mode::Insert => BORDER_INSERT,
-            _ => BORDER_NORMAL,
+        let border_color = if task_editor_focused {
+            BORDER_NORMAL
+        } else {
+            // Task list is active - use brighter border
+            BORDER_INSERT
         };
 
         let block = Block::default()
@@ -544,150 +990,256 @@ impl TaskListUI {
         f.render_stateful_widget(list, area, &mut self.state);
     }
 
-    fn render_task_details(&self, f: &mut TuiFrame, area: Rect, tasks: &[Task]) {
-        let block = Block::default()
-            .title(" Task Details ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER_NORMAL))
-            .style(Style::default().bg(NORMAL_BG))
-            .padding(Padding::uniform(1));
+    fn render_task_details(
+        &mut self,
+        f: &mut TuiFrame,
+        area: Rect,
+        tasks: &[Task],
+        task_editor_focused: bool,
+    ) {
+        self.render_task_editor(f, area, tasks, task_editor_focused);
+    }
 
-        let content = if let Some(i) = self.state.selected() {
-            if let Some(task) = tasks.get(i) {
-                let mut lines = vec![];
+    fn render_task_editor(
+        &mut self,
+        f: &mut TuiFrame,
+        area: Rect,
+        _tasks: &[Task],
+        task_editor_focused: bool,
+    ) {
+        // Render background
+        let bg_block = Block::default().style(Style::default().bg(NORMAL_BG));
+        f.render_widget(bg_block, area);
 
-                // Title
-                lines.push(Line::from(vec![Span::styled(
-                    "Title:",
-                    Style::default().fg(ACCENT_YELLOW).bold(),
-                )]));
-                lines.push(Line::from(vec![Span::styled(
-                    &task.title,
-                    Style::default().fg(TEXT_FG),
-                )]));
-                lines.push(Line::from(""));
-
-                // Status
-                let status_text = "Todo";
-                lines.push(Line::from(vec![Span::styled(
-                    "Status:",
-                    Style::default().fg(ACCENT_YELLOW).bold(),
-                )]));
-                lines.push(Line::from(vec![Span::styled(
-                    status_text,
-                    Style::default().fg(TEXT_FG),
-                )]));
-                lines.push(Line::from(""));
-
-                // Priority
-                let priority_text = match task.priority {
-                    TaskPriority::High => "High 🔴",
-                    TaskPriority::Medium => "Medium 🟡",
-                    TaskPriority::Low => "Low 🔵",
-                    TaskPriority::None => "None",
-                };
-                lines.push(Line::from(vec![Span::styled(
-                    "Priority:",
-                    Style::default().fg(ACCENT_YELLOW).bold(),
-                )]));
-                lines.push(Line::from(vec![Span::styled(
-                    priority_text,
-                    Style::default().fg(TEXT_FG),
-                )]));
-                lines.push(Line::from(""));
-
-                // Due Date
-                if task.due_date.timestamp() != 0 {
-                    let local: DateTime<Local> = task.due_date.with_timezone(&Local);
-                    let due_str = if task.is_all_day {
-                        local.format("%m/%d/%Y").to_string()
-                    } else {
-                        local.format("%m/%d/%Y %I:%M %p").to_string()
-                    };
-
-                    // Check if task is overdue
-                    let is_overdue = {
-                        let now_local = chrono::Local::now();
-                        let due_date_local = task.due_date.with_timezone(&chrono::Local);
-
-                        if task.is_all_day {
-                            // For all-day tasks, compare dates only (not time)
-                            // They're only overdue if the due date is before today's date
-                            due_date_local.date_naive() < now_local.date_naive()
-                        } else {
-                            // For timed tasks, compare full datetime
-                            due_date_local < now_local
-                        }
-                    };
-
-                    let date_color = if is_overdue {
-                        DATE_OVERDUE
-                    } else {
-                        DATE_NORMAL
-                    };
-
-                    lines.push(Line::from(vec![Span::styled(
-                        "Due Date:",
-                        Style::default().fg(ACCENT_YELLOW).bold(),
-                    )]));
-                    lines.push(Line::from(vec![Span::styled(
-                        due_str,
-                        Style::default().fg(date_color),
-                    )]));
-                    lines.push(Line::from(""));
-                }
-
-                // Start Date (only show if different from due date)
-                if task.start_date.timestamp() != 0 && task.start_date != task.due_date {
-                    let local: DateTime<Local> = task.start_date.with_timezone(&Local);
-                    let start_str = if task.is_all_day {
-                        local.format("%m/%d/%Y").to_string()
-                    } else {
-                        local.format("%m/%d/%Y %I:%M %p").to_string()
-                    };
-                    lines.push(Line::from(vec![Span::styled(
-                        "Start Date:",
-                        Style::default().fg(ACCENT_YELLOW).bold(),
-                    )]));
-                    lines.push(Line::from(vec![Span::styled(
-                        start_str,
-                        Style::default().fg(TEXT_FG),
-                    )]));
-                    lines.push(Line::from(""));
-                }
-
-                // Description/Content if available
-                if !task.content.is_empty() {
-                    lines.push(Line::from(vec![Span::styled(
-                        "Description:",
-                        Style::default().fg(ACCENT_YELLOW).bold(),
-                    )]));
-                    lines.push(Line::from(""));
-                    // Split content by newlines and create separate lines for proper rendering
-                    for content_line in task.content.lines() {
-                        lines.push(Line::from(Span::styled(
-                            content_line,
-                            Style::default().fg(TEXT_FG),
-                        )));
-                    }
-                }
-
-                Paragraph::new(lines)
-                    .block(block)
-                    .wrap(Wrap { trim: false })
-                    .style(Style::default().fg(TEXT_FG))
-            } else {
-                Paragraph::new("No task selected")
-                    .block(block)
-                    .style(Style::default().fg(TEXT_FG))
-            }
+        let constraints = if task_editor_focused {
+            vec![
+                Constraint::Length(3), // Title field
+                Constraint::Length(8), // Description field
+                Constraint::Length(4), // Date field + error message
+                Constraint::Length(4), // Time field + error message
+            ]
         } else {
-            Paragraph::new("No task selected")
-                .block(block)
-                .style(Style::default().fg(TEXT_FG))
+            vec![
+                Constraint::Length(3), // Title field
+                Constraint::Length(8), // Description field
+                Constraint::Length(4), // Date field + error message
+                Constraint::Length(4), // Time field + error message
+            ]
         };
 
-        f.render_widget(content, area);
+        let chunks = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .margin(1)
+            .constraints(constraints)
+            .split(area);
+
+        // Title field
+        let title_border_color = if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Title
+            && self.task_editor.is_current_editor_in_insert_mode()
+        {
+            ACCENT_YELLOW
+        } else if task_editor_focused && self.task_editor.current_input_field == InputField::Title {
+            BORDER_INSERT
+        } else {
+            BORDER_NORMAL
+        };
+
+        let title_block = Block::default()
+            .title("Title")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(title_border_color))
+            .style(Style::default().bg(NORMAL_BG));
+
+        let title_inner = title_block.inner(chunks[0]);
+        f.render_widget(title_block, chunks[0]);
+
+        let title_theme =
+            if task_editor_focused && self.task_editor.current_input_field == InputField::Title {
+                EditorTheme::default()
+                    .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                    .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                    .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                    .hide_status_line()
+            } else {
+                EditorTheme::default()
+                    .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                    .hide_status_line()
+                    .hide_cursor()
+            };
+        let title_editor_view =
+            EditorView::new(&mut self.task_editor.input_title_editor).theme(title_theme);
+        f.render_widget(title_editor_view, title_inner);
+
+        // Description field
+        let description_border_color = if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Description
+            && self.task_editor.is_current_editor_in_insert_mode()
+        {
+            ACCENT_YELLOW
+        } else if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Description
+        {
+            BORDER_INSERT
+        } else {
+            BORDER_NORMAL
+        };
+
+        let description_block = Block::default()
+            .title("Description")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(description_border_color))
+            .style(Style::default().bg(NORMAL_BG));
+
+        let description_inner = description_block.inner(chunks[1]);
+        f.render_widget(description_block, chunks[1]);
+
+        let description_theme = if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Description
+        {
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                .hide_status_line()
+        } else {
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .hide_status_line()
+                .hide_cursor()
+        };
+        let description_editor_view =
+            EditorView::new(&mut self.task_editor.input_description_editor)
+                .theme(description_theme);
+        f.render_widget(description_editor_view, description_inner);
+
+        // Date field with error message layout
+        let date_field_layout = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Date input
+                Constraint::Length(1), // Error message
+            ])
+            .split(chunks[2]);
+
+        let date_has_error =
+            self.task_editor.validation_attempted && self.task_editor.date_error.is_some();
+        let date_border_color = if date_has_error {
+            ACCENT_RED
+        } else if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Date
+            && self.task_editor.is_current_editor_in_insert_mode()
+        {
+            ACCENT_YELLOW
+        } else if task_editor_focused && self.task_editor.current_input_field == InputField::Date {
+            BORDER_INSERT
+        } else {
+            BORDER_NORMAL
+        };
+
+        let date_block = Block::default()
+            .title("Date (MM/DD/YYYY)")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(date_border_color))
+            .style(Style::default().bg(NORMAL_BG));
+
+        let date_inner = date_block.inner(date_field_layout[0]);
+        f.render_widget(date_block, date_field_layout[0]);
+
+        let date_theme =
+            if task_editor_focused && self.task_editor.current_input_field == InputField::Date {
+                EditorTheme::default()
+                    .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                    .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                    .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                    .hide_status_line()
+            } else {
+                EditorTheme::default()
+                    .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                    .hide_status_line()
+                    .hide_cursor()
+            };
+        let date_editor_view =
+            EditorView::new(&mut self.task_editor.input_date_editor).theme(date_theme);
+        f.render_widget(date_editor_view, date_inner);
+
+        // Render date error message if present
+        if let Some(error) = &self.task_editor.date_error {
+            let error_paragraph =
+                Paragraph::new(error.as_str()).style(Style::default().fg(ACCENT_RED).bg(NORMAL_BG));
+            f.render_widget(error_paragraph, date_field_layout[1]);
+        }
+
+        // Time field with error message layout
+        let time_field_layout = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Time input
+                Constraint::Length(1), // Error message
+            ])
+            .split(chunks[3]);
+
+        let time_has_error =
+            self.task_editor.validation_attempted && self.task_editor.time_error.is_some();
+        let time_border_color = if time_has_error {
+            ACCENT_RED
+        } else if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Time
+            && self.task_editor.is_current_editor_in_insert_mode()
+        {
+            ACCENT_YELLOW
+        } else if task_editor_focused && self.task_editor.current_input_field == InputField::Time {
+            BORDER_INSERT
+        } else {
+            BORDER_NORMAL
+        };
+
+        let time_block = Block::default()
+            .title("Time (HH:MM AM/PM)")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(time_border_color))
+            .style(Style::default().bg(NORMAL_BG));
+
+        let time_inner = time_block.inner(time_field_layout[0]);
+        f.render_widget(time_block, time_field_layout[0]);
+
+        let time_theme =
+            if task_editor_focused && self.task_editor.current_input_field == InputField::Time {
+                EditorTheme::default()
+                    .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                    .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                    .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                    .hide_status_line()
+            } else {
+                EditorTheme::default()
+                    .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                    .hide_status_line()
+                    .hide_cursor()
+            };
+        let time_editor_view =
+            EditorView::new(&mut self.task_editor.input_time_editor).theme(time_theme);
+        f.render_widget(time_editor_view, time_inner);
+
+        // Render time error message if present
+        if let Some(error) = &self.task_editor.time_error {
+            let error_paragraph =
+                Paragraph::new(error.as_str()).style(Style::default().fg(ACCENT_RED).bg(NORMAL_BG));
+            f.render_widget(error_paragraph, time_field_layout[1]);
+        }
+
+        // Render the main border with title
+        let border_color = if task_editor_focused {
+            BORDER_INSERT
+        } else {
+            BORDER_NORMAL
+        };
+
+        let main_block = Block::default()
+            .title(" Task Details ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color));
+
+        f.render_widget(main_block, area);
     }
 
     fn render_footer(&self, f: &mut TuiFrame, area: Rect, mode: Mode) {
@@ -786,6 +1338,7 @@ impl TaskListUI {
 }
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    // Cut the given rectangle into three vertical pieces
     let popup_layout = Layout::default()
         .direction(ratatui::layout::Direction::Vertical)
         .constraints([
@@ -795,6 +1348,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(r);
 
+    // Then cut the middle vertical piece into three width-wise pieces
     Layout::default()
         .direction(ratatui::layout::Direction::Horizontal)
         .constraints([
@@ -802,5 +1356,5 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage(percent_x),
             Constraint::Percentage((100 - percent_x) / 2),
         ])
-        .split(popup_layout[1])[1]
+        .split(popup_layout[1])[1] // Return the middle chunk
 }

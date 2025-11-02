@@ -8,6 +8,7 @@ mod tui;
 mod ui;
 mod utils;
 
+use std::sync::Arc;
 use ticks::{AccessToken, TickTick};
 
 #[tokio::main]
@@ -20,7 +21,7 @@ async fn main() {
 }
 
 async fn run(access_token: AccessToken) -> anyhow::Result<()> {
-    let client = create_client(access_token)?;
+    let client = Arc::new(create_client(access_token)?);
     let mut app = app::App::new(client)?;
     app.run().await?;
     Ok(())
