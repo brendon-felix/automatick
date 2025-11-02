@@ -32,6 +32,16 @@ pub trait Modal {
 
     /// Set initial values
     fn set_values(&mut self, values: Vec<String>);
+
+    /// Validate inputs and return true if valid (default implementation always returns true)
+    fn validate(&mut self) -> bool {
+        true
+    }
+
+    /// Check if there are any validation errors (default implementation always returns false)
+    fn has_validation_errors(&self) -> bool {
+        false
+    }
 }
 
 /// Modal for creating and editing tasks
@@ -45,6 +55,10 @@ pub struct TaskModal {
     event_handler: EditorEventHandler,
     is_edit_mode: bool,
     desired_column: usize,
+    // Validation state
+    validation_attempted: bool,
+    date_error: Option<String>,
+    time_error: Option<String>,
 }
 
 impl TaskModal {
@@ -59,6 +73,9 @@ impl TaskModal {
             event_handler: EditorEventHandler::default(),
             is_edit_mode: false,
             desired_column: 0,
+            validation_attempted: false,
+            date_error: None,
+            time_error: None,
         }
     }
 
@@ -388,6 +405,16 @@ impl TaskModal {
         self.handle_input_key_event(key_event)?;
         // Update desired column after handling input that may change cursor position
         self.update_desired_column();
+
+        // Clear validation errors when user edits a field
+        if self.validation_attempted {
+            match self.current_input_field {
+                InputField::Date => self.date_error = None,
+                InputField::Time => self.time_error = None,
+                _ => {}
+            }
+        }
+
         Ok(())
     }
 }
@@ -568,7 +595,7 @@ impl Modal for TaskModal {
     }
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
-        let popup_area = centered_rect(60, 40, area);
+        let popup_area = centered_rect(60, 50, area);
         frame.render_widget(Clear, popup_area);
 
         // Render background
@@ -581,12 +608,11 @@ impl Modal for TaskModal {
             .constraints([
                 Constraint::Length(3), // Title field
                 Constraint::Length(8), // Description field
-                Constraint::Length(3), // Date field
-                Constraint::Length(3), // Time field
+                Constraint::Length(4), // Date field + error message
+                Constraint::Length(4), // Time field + error message
                 Constraint::Min(1),    // Help text
             ])
             .split(popup_area);
-
         // Title field
         let title_border_color = if self.current_input_field == InputField::Title
             && self.is_current_editor_in_insert_mode()
@@ -662,8 +688,19 @@ impl Modal for TaskModal {
             EditorView::new(&mut self.input_description_editor).theme(description_theme);
         frame.render_widget(description_editor_view, description_inner);
 
-        // Date field
-        let date_border_color = if self.current_input_field == InputField::Date
+        // Date field with error message layout
+        let date_field_layout = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Date input
+                Constraint::Length(1), // Error message
+            ])
+            .split(chunks[2]);
+
+        let date_has_error = self.validation_attempted && self.date_error.is_some();
+        let date_border_color = if date_has_error {
+            ACCENT_RED
+        } else if self.current_input_field == InputField::Date
             && self.is_current_editor_in_insert_mode()
         {
             if self.is_edit_mode {
@@ -681,8 +718,8 @@ impl Modal for TaskModal {
             .border_style(Style::default().fg(date_border_color))
             .style(Style::default().bg(NORMAL_BG));
 
-        let date_inner = date_block.inner(chunks[2]);
-        frame.render_widget(date_block, chunks[2]);
+        let date_inner = date_block.inner(date_field_layout[0]);
+        frame.render_widget(date_block, date_field_layout[0]);
 
         let date_theme = if self.current_input_field == InputField::Date {
             EditorTheme::default()
@@ -699,8 +736,26 @@ impl Modal for TaskModal {
         let date_editor_view = EditorView::new(&mut self.input_date_editor).theme(date_theme);
         frame.render_widget(date_editor_view, date_inner);
 
-        // Time field
-        let time_border_color = if self.current_input_field == InputField::Time
+        // Render date error message if present
+        if let Some(error) = &self.date_error {
+            let error_paragraph =
+                Paragraph::new(error.as_str()).style(Style::default().fg(ACCENT_RED).bg(NORMAL_BG));
+            frame.render_widget(error_paragraph, date_field_layout[1]);
+        }
+
+        // Time field with error message layout
+        let time_field_layout = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Time input
+                Constraint::Length(1), // Error message
+            ])
+            .split(chunks[3]);
+
+        let time_has_error = self.validation_attempted && self.time_error.is_some();
+        let time_border_color = if time_has_error {
+            ACCENT_RED
+        } else if self.current_input_field == InputField::Time
             && self.is_current_editor_in_insert_mode()
         {
             if self.is_edit_mode {
@@ -718,8 +773,8 @@ impl Modal for TaskModal {
             .border_style(Style::default().fg(time_border_color))
             .style(Style::default().bg(NORMAL_BG));
 
-        let time_inner = time_block.inner(chunks[3]);
-        frame.render_widget(time_block, chunks[3]);
+        let time_inner = time_block.inner(time_field_layout[0]);
+        frame.render_widget(time_block, time_field_layout[0]);
 
         let time_theme = if self.current_input_field == InputField::Time {
             EditorTheme::default()
@@ -735,6 +790,13 @@ impl Modal for TaskModal {
         };
         let time_editor_view = EditorView::new(&mut self.input_time_editor).theme(time_theme);
         frame.render_widget(time_editor_view, time_inner);
+
+        // Render time error message if present
+        if let Some(error) = &self.time_error {
+            let error_paragraph =
+                Paragraph::new(error.as_str()).style(Style::default().fg(ACCENT_RED).bg(NORMAL_BG));
+            frame.render_widget(error_paragraph, time_field_layout[1]);
+        }
 
         // Help text at bottom of modal
         let help_text = vec![Line::from(vec![
@@ -780,6 +842,9 @@ impl Modal for TaskModal {
         self.input_date_editor = EditorState::default();
         self.input_time_editor = EditorState::default();
         self.current_input_field = InputField::Title;
+        self.validation_attempted = false;
+        self.date_error = None;
+        self.time_error = None;
     }
 
     fn set_values(&mut self, values: Vec<String>) {
@@ -795,6 +860,45 @@ impl Modal for TaskModal {
         if values.len() >= 4 && !values[3].is_empty() {
             self.input_time_editor = EditorState::new(Lines::from(values[3].clone()));
         }
+    }
+
+    fn validate(&mut self) -> bool {
+        use crate::utils::{parse_date_us_format, parse_time_us_format};
+
+        self.validation_attempted = true;
+        let mut is_valid = true;
+
+        // Validate date field (only if not empty)
+        let date_str = self.get_input_date();
+        if !date_str.trim().is_empty() {
+            if let Err(err) = parse_date_us_format(&date_str) {
+                self.date_error = Some(err);
+                is_valid = false;
+            } else {
+                self.date_error = None;
+            }
+        } else {
+            self.date_error = None;
+        }
+
+        // Validate time field (only if not empty)
+        let time_str = self.get_input_time();
+        if !time_str.trim().is_empty() {
+            if let Err(err) = parse_time_us_format(&time_str) {
+                self.time_error = Some(err);
+                is_valid = false;
+            } else {
+                self.time_error = None;
+            }
+        } else {
+            self.time_error = None;
+        }
+
+        is_valid
+    }
+
+    fn has_validation_errors(&self) -> bool {
+        self.date_error.is_some() || self.time_error.is_some()
     }
 }
 
@@ -823,6 +927,8 @@ impl Modal for ConfirmationModal {
         // All key handling is done at the app level
         Ok(false)
     }
+
+    // Uses default implementations for validate() and has_validation_errors()
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
         // Message content
@@ -912,6 +1018,9 @@ pub struct PostponeModal {
     title: String,
     input_duration_editor: EditorState,
     event_handler: EditorEventHandler,
+    // Validation state
+    validation_attempted: bool,
+    duration_error: Option<String>,
 }
 
 impl PostponeModal {
@@ -920,6 +1029,8 @@ impl PostponeModal {
             title: title.to_string(),
             input_duration_editor: EditorState::default(),
             event_handler: EditorEventHandler::default(),
+            validation_attempted: false,
+            duration_error: None,
         }
     }
 
@@ -963,6 +1074,12 @@ impl PostponeModal {
     pub fn handle_input_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
         self.event_handler
             .on_key_event(key_event, &mut self.input_duration_editor);
+
+        // Clear validation errors when user edits the field
+        if self.validation_attempted {
+            self.duration_error = None;
+        }
+
         Ok(())
     }
 }
@@ -978,7 +1095,7 @@ impl Modal for PostponeModal {
     }
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
-        let popup_area = centered_rect(60, 25, area);
+        let popup_area = centered_rect(60, 27, area);
         frame.render_widget(Clear, popup_area);
 
         // Render background
@@ -989,13 +1106,24 @@ impl Modal for PostponeModal {
             .direction(ratatui::layout::Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(3), // Duration field
+                Constraint::Length(4), // Duration field + error message
                 Constraint::Min(1),    // Instructions
             ])
             .split(popup_area);
 
-        // Duration field
-        let duration_border_color = if self.is_editor_in_insert_mode() {
+        // Duration field with error message layout
+        let duration_field_layout = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Duration input
+                Constraint::Length(1), // Error message
+            ])
+            .split(chunks[0]);
+
+        let duration_has_error = self.validation_attempted && self.duration_error.is_some();
+        let duration_border_color = if duration_has_error {
+            ACCENT_RED
+        } else if self.is_editor_in_insert_mode() {
             BORDER_INSERT
         } else {
             BORDER_PROCESSING
@@ -1007,8 +1135,8 @@ impl Modal for PostponeModal {
             .border_style(Style::default().fg(duration_border_color))
             .style(Style::default().bg(NORMAL_BG));
 
-        let duration_inner = duration_block.inner(chunks[0]);
-        frame.render_widget(duration_block, chunks[0]);
+        let duration_inner = duration_block.inner(duration_field_layout[0]);
+        frame.render_widget(duration_block, duration_field_layout[0]);
 
         let duration_theme = EditorTheme::default()
             .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
@@ -1018,6 +1146,13 @@ impl Modal for PostponeModal {
         let duration_editor_view =
             EditorView::new(&mut self.input_duration_editor).theme(duration_theme);
         frame.render_widget(duration_editor_view, duration_inner);
+
+        // Render duration error message if present
+        if let Some(error) = &self.duration_error {
+            let error_paragraph =
+                Paragraph::new(error.as_str()).style(Style::default().fg(ACCENT_RED).bg(NORMAL_BG));
+            frame.render_widget(error_paragraph, duration_field_layout[1]);
+        }
 
         // Instructions
         let instructions = Paragraph::new(vec![
@@ -1095,11 +1230,40 @@ impl Modal for PostponeModal {
 
     fn clear_inputs(&mut self) {
         self.input_duration_editor = EditorState::default();
+        self.validation_attempted = false;
+        self.duration_error = None;
     }
 
     fn set_values(&mut self, values: Vec<String>) {
         if values.len() >= 1 && !values[0].is_empty() {
             self.input_duration_editor = EditorState::new(Lines::from(values[0].clone()));
         }
+    }
+
+    fn validate(&mut self) -> bool {
+        use crate::utils::parse_duration;
+
+        self.validation_attempted = true;
+        let duration_str = self.get_input_duration();
+
+        if duration_str.trim().is_empty() {
+            self.duration_error = Some("Duration cannot be empty".to_string());
+            return false;
+        }
+
+        match parse_duration(&duration_str) {
+            Ok(_) => {
+                self.duration_error = None;
+                true
+            }
+            Err(err) => {
+                self.duration_error = Some(err);
+                false
+            }
+        }
+    }
+
+    fn has_validation_errors(&self) -> bool {
+        self.duration_error.is_some()
     }
 }

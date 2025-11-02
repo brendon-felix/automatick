@@ -468,6 +468,13 @@ impl App {
         }
 
         if self.mode == Mode::Insert {
+            // Validate modal input before processing
+            if self.ui.has_modal() && !self.ui.validate_modal() {
+                // Validation failed, don't process the input
+                // The modal will display error messages to the user
+                return;
+            }
+
             let values = if self.ui.has_modal() {
                 self.ui.get_modal_values()
             } else {
@@ -768,7 +775,7 @@ impl App {
                 KeyCode::Esc => action_tx.send(Action::SelectNone)?,
                 KeyCode::Char('r') => action_tx.send(Action::RefreshTasks)?,
                 KeyCode::Char('n') => action_tx.send(Action::StartCreateTask)?,
-                KeyCode::Char('e') => action_tx.send(Action::StartEditTask)?,
+                KeyCode::Char('e') => action_tx.send(Action::CompleteTask)?,
                 KeyCode::Char('d') => action_tx.send(Action::StartDeleteTask)?,
                 KeyCode::Char('p') => {
                     if key
@@ -792,7 +799,7 @@ impl App {
                 KeyCode::Char('G') | KeyCode::End => action_tx.send(Action::SelectLast)?,
                 KeyCode::Char('h') | KeyCode::Left => action_tx.send(Action::PreviousTab)?,
                 KeyCode::Char('l') | KeyCode::Right => action_tx.send(Action::NextTab)?,
-                KeyCode::Char(' ') => action_tx.send(Action::CompleteTask)?,
+
                 KeyCode::Enter => action_tx.send(Action::StartEditTask)?,
                 KeyCode::Char('v') => action_tx.send(Action::EnterVisual)?,
                 _ => {}
@@ -858,7 +865,7 @@ impl App {
                 KeyCode::Char('g') | KeyCode::Home => action_tx.send(Action::SelectFirst)?,
                 KeyCode::Char('G') | KeyCode::End => action_tx.send(Action::SelectLast)?,
                 KeyCode::Char('d') => action_tx.send(Action::StartDeleteTask)?,
-                KeyCode::Char(' ') => action_tx.send(Action::CompleteTask)?,
+
                 KeyCode::Char('p') => {
                     if key
                         .modifiers

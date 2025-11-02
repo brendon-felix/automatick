@@ -203,6 +203,14 @@ impl TaskListUI {
         }
     }
 
+    pub fn validate_modal(&mut self) -> bool {
+        if let Some(modal) = &mut self.current_modal {
+            modal.validate()
+        } else {
+            true
+        }
+    }
+
     pub fn next_tab(&mut self) {
         self.current_tab = match self.current_tab {
             ViewTab::Today => ViewTab::Week,
@@ -716,7 +724,8 @@ impl TaskListUI {
                 Style::default().fg(Color::Yellow).bold(),
             )),
             Line::from(""),
-            Line::from("  Space / Enter  Complete task"),
+            Line::from("  e              Complete task"),
+            Line::from("  Enter          Edit task"),
             Line::from("  n              Create new task (with date/time)"),
             Line::from("  d              Delete selected task"),
             Line::from("  r              Refresh task list"),
