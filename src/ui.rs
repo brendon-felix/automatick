@@ -10,6 +10,7 @@ use ratatui::{
 use ticks::tasks::{Task, TaskPriority};
 
 use crate::app::Mode;
+use crate::colors::*;
 use crate::modal::Modal;
 use crate::tui::Frame as TuiFrame;
 
@@ -20,16 +21,7 @@ pub enum ViewTab {
     Inbox,
 }
 
-// Color scheme
-const HEADER_BG: Color = Color::Rgb(36, 36, 36);
-const HEADER_FG: Color = Color::Rgb(200, 200, 200);
-const NORMAL_BG: Color = Color::Rgb(19, 19, 19);
-const ALT_BG: Color = Color::Rgb(25, 25, 25);
-const SELECTED_BG: Color = Color::Rgb(36, 36, 36);
-const TEXT_FG: Color = Color::Rgb(200, 200, 200);
-const BORDER_NORMAL: Color = Color::Rgb(116, 116, 116);
-const BORDER_PROCESSING: Color = Color::Rgb(116, 116, 116);
-const BORDER_INSERT: Color = Color::Rgb(165, 165, 165);
+// Color constants are now centralized in colors.rs
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputField {
@@ -256,6 +248,10 @@ impl TaskListUI {
         error_message: &Option<String>,
         tasks_loaded: bool,
     ) -> Result<()> {
+        // Set consistent background for entire screen
+        let background = Block::default().style(Style::default().bg(NORMAL_BG));
+        f.render_widget(background, area);
+
         // Main vertical layout: Header, Content, Footer
         let main_chunks = Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
@@ -310,7 +306,7 @@ impl TaskListUI {
         };
 
         let style = if error_message.is_some() {
-            Style::default().fg(Color::White).bg(Color::Red).bold()
+            Style::default().fg(TEXT_WHITE).bg(ACCENT_RED).bold()
         } else {
             Style::default().fg(HEADER_FG).bg(HEADER_BG).bold()
         };
@@ -332,19 +328,19 @@ impl TaskListUI {
 
         // Render tabs
         let today_style = if self.current_tab == ViewTab::Today {
-            Style::default().fg(Color::White).bg(SELECTED_BG).bold()
+            Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold()
         } else {
             Style::default().fg(HEADER_FG).bg(HEADER_BG)
         };
 
         let week_style = if self.current_tab == ViewTab::Week {
-            Style::default().fg(Color::White).bg(SELECTED_BG).bold()
+            Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold()
         } else {
             Style::default().fg(HEADER_FG).bg(HEADER_BG)
         };
 
         let inbox_style = if self.current_tab == ViewTab::Inbox {
-            Style::default().fg(Color::White).bg(SELECTED_BG).bold()
+            Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold()
         } else {
             Style::default().fg(HEADER_FG).bg(HEADER_BG)
         };
@@ -443,10 +439,10 @@ impl TaskListUI {
                 let status_icon = "○";
 
                 let priority_color = match task.priority {
-                    TaskPriority::High => Color::Red,
-                    TaskPriority::Medium => Color::Yellow,
-                    TaskPriority::Low => Color::Blue,
-                    TaskPriority::None => Color::Gray,
+                    TaskPriority::High => PRIORITY_HIGH,
+                    TaskPriority::Medium => PRIORITY_MEDIUM,
+                    TaskPriority::Low => PRIORITY_LOW,
+                    TaskPriority::None => PRIORITY_NONE,
                 };
 
                 let text_color = TEXT_FG;
@@ -485,9 +481,9 @@ impl TaskListUI {
                     };
 
                     let date_color = if is_overdue {
-                        Color::Rgb(150, 80, 80) // Subtle desaturated red
+                        DATE_OVERDUE
                     } else {
-                        Color::Rgb(100, 100, 100)
+                        DATE_NORMAL
                     };
 
                     // row3_spans.push(Span::styled(
@@ -539,7 +535,7 @@ impl TaskListUI {
                 // Title
                 lines.push(Line::from(vec![Span::styled(
                     "Title:",
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(ACCENT_YELLOW).bold(),
                 )]));
                 lines.push(Line::from(vec![Span::styled(
                     &task.title,
@@ -551,7 +547,7 @@ impl TaskListUI {
                 let status_text = "Todo";
                 lines.push(Line::from(vec![Span::styled(
                     "Status:",
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(ACCENT_YELLOW).bold(),
                 )]));
                 lines.push(Line::from(vec![Span::styled(
                     status_text,
@@ -568,7 +564,7 @@ impl TaskListUI {
                 };
                 lines.push(Line::from(vec![Span::styled(
                     "Priority:",
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(ACCENT_YELLOW).bold(),
                 )]));
                 lines.push(Line::from(vec![Span::styled(
                     priority_text,
@@ -601,14 +597,14 @@ impl TaskListUI {
                     };
 
                     let date_color = if is_overdue {
-                        Color::Rgb(150, 80, 80) // Subtle desaturated red
+                        DATE_OVERDUE
                     } else {
-                        TEXT_FG
+                        DATE_NORMAL
                     };
 
                     lines.push(Line::from(vec![Span::styled(
                         "Due Date:",
-                        Style::default().fg(Color::Yellow).bold(),
+                        Style::default().fg(ACCENT_YELLOW).bold(),
                     )]));
                     lines.push(Line::from(vec![Span::styled(
                         due_str,
@@ -627,7 +623,7 @@ impl TaskListUI {
                     };
                     lines.push(Line::from(vec![Span::styled(
                         "Start Date:",
-                        Style::default().fg(Color::Yellow).bold(),
+                        Style::default().fg(ACCENT_YELLOW).bold(),
                     )]));
                     lines.push(Line::from(vec![Span::styled(
                         start_str,
@@ -640,7 +636,7 @@ impl TaskListUI {
                 if !task.content.is_empty() {
                     lines.push(Line::from(vec![Span::styled(
                         "Description:",
-                        Style::default().fg(Color::Yellow).bold(),
+                        Style::default().fg(ACCENT_YELLOW).bold(),
                     )]));
                     lines.push(Line::from(""));
                     // Split content by newlines and create separate lines for proper rendering
@@ -698,14 +694,14 @@ impl TaskListUI {
         let block = Block::default()
             .title(" Help ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow))
+            .border_style(Style::default().fg(ACCENT_YELLOW))
             .style(Style::default().bg(NORMAL_BG))
             .padding(Padding::uniform(1));
 
         let help_text = vec![
             Line::from(Span::styled(
                 "Navigation",
-                Style::default().fg(Color::Yellow).bold(),
+                Style::default().fg(ACCENT_YELLOW).bold(),
             )),
             Line::from(""),
             Line::from("  ↑ / k          Move selection up"),

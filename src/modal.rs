@@ -3,11 +3,12 @@ use crossterm::event::KeyEvent;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, Lines};
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
+use crate::colors::*;
 use crate::tui::Frame as TuiFrame;
 use crate::ui::{centered_rect, InputField};
 
@@ -567,14 +568,12 @@ impl Modal for TaskModal {
     }
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
-        // Colors
-        const BORDER_NORMAL: Color = Color::Rgb(100, 100, 100);
-        const BORDER_INSERT: Color = Color::Green;
-        const BORDER_EDIT: Color = Color::Blue;
-        const TEXT_FG: Color = Color::White;
-
         let popup_area = centered_rect(60, 40, area);
         frame.render_widget(Clear, popup_area);
+
+        // Render background
+        let bg_block = Block::default().style(Style::default().bg(NORMAL_BG));
+        frame.render_widget(bg_block, popup_area);
 
         let chunks = Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
@@ -584,6 +583,7 @@ impl Modal for TaskModal {
                 Constraint::Length(8), // Description field
                 Constraint::Length(3), // Date field
                 Constraint::Length(3), // Time field
+                Constraint::Min(1),    // Help text
             ])
             .split(popup_area);
 
@@ -591,23 +591,35 @@ impl Modal for TaskModal {
         let title_border_color = if self.current_input_field == InputField::Title
             && self.is_current_editor_in_insert_mode()
         {
-            BORDER_INSERT
+            if self.is_edit_mode {
+                BORDER_EDIT
+            } else {
+                BORDER_NEW
+            }
         } else {
-            BORDER_NORMAL
+            BORDER_PROCESSING
         };
 
         let title_block = Block::default()
             .title("Title")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(title_border_color));
+            .border_style(Style::default().fg(title_border_color))
+            .style(Style::default().bg(NORMAL_BG));
 
         let title_inner = title_block.inner(chunks[0]);
         frame.render_widget(title_block, chunks[0]);
 
         let title_theme = if self.current_input_field == InputField::Title {
-            EditorTheme::default().hide_status_line()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                .hide_status_line()
         } else {
-            EditorTheme::default().hide_status_line().hide_cursor()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .hide_status_line()
+                .hide_cursor()
         };
         let title_editor_view = EditorView::new(&mut self.input_title_editor).theme(title_theme);
         frame.render_widget(title_editor_view, title_inner);
@@ -616,23 +628,35 @@ impl Modal for TaskModal {
         let description_border_color = if self.current_input_field == InputField::Description
             && self.is_current_editor_in_insert_mode()
         {
-            BORDER_INSERT
+            if self.is_edit_mode {
+                BORDER_EDIT
+            } else {
+                BORDER_NEW
+            }
         } else {
-            BORDER_NORMAL
+            BORDER_PROCESSING
         };
 
         let description_block = Block::default()
             .title("Description")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(description_border_color));
+            .border_style(Style::default().fg(description_border_color))
+            .style(Style::default().bg(NORMAL_BG));
 
         let description_inner = description_block.inner(chunks[1]);
         frame.render_widget(description_block, chunks[1]);
 
         let description_theme = if self.current_input_field == InputField::Description {
-            EditorTheme::default().hide_status_line()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                .hide_status_line()
         } else {
-            EditorTheme::default().hide_status_line().hide_cursor()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .hide_status_line()
+                .hide_cursor()
         };
         let description_editor_view =
             EditorView::new(&mut self.input_description_editor).theme(description_theme);
@@ -642,23 +666,35 @@ impl Modal for TaskModal {
         let date_border_color = if self.current_input_field == InputField::Date
             && self.is_current_editor_in_insert_mode()
         {
-            BORDER_INSERT
+            if self.is_edit_mode {
+                BORDER_EDIT
+            } else {
+                BORDER_NEW
+            }
         } else {
-            BORDER_NORMAL
+            BORDER_PROCESSING
         };
 
         let date_block = Block::default()
             .title("Date (MM/DD/YYYY)")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(date_border_color));
+            .border_style(Style::default().fg(date_border_color))
+            .style(Style::default().bg(NORMAL_BG));
 
         let date_inner = date_block.inner(chunks[2]);
         frame.render_widget(date_block, chunks[2]);
 
         let date_theme = if self.current_input_field == InputField::Date {
-            EditorTheme::default().hide_status_line()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                .hide_status_line()
         } else {
-            EditorTheme::default().hide_status_line().hide_cursor()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .hide_status_line()
+                .hide_cursor()
         };
         let date_editor_view = EditorView::new(&mut self.input_date_editor).theme(date_theme);
         frame.render_widget(date_editor_view, date_inner);
@@ -667,48 +703,59 @@ impl Modal for TaskModal {
         let time_border_color = if self.current_input_field == InputField::Time
             && self.is_current_editor_in_insert_mode()
         {
-            BORDER_INSERT
+            if self.is_edit_mode {
+                BORDER_EDIT
+            } else {
+                BORDER_NEW
+            }
         } else {
-            BORDER_NORMAL
+            BORDER_PROCESSING
         };
 
         let time_block = Block::default()
             .title("Time (HH:MM AM/PM)")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(time_border_color));
+            .border_style(Style::default().fg(time_border_color))
+            .style(Style::default().bg(NORMAL_BG));
 
         let time_inner = time_block.inner(chunks[3]);
         frame.render_widget(time_block, chunks[3]);
 
         let time_theme = if self.current_input_field == InputField::Time {
-            EditorTheme::default().hide_status_line()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                .hide_status_line()
         } else {
-            EditorTheme::default().hide_status_line().hide_cursor()
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .hide_status_line()
+                .hide_cursor()
         };
         let time_editor_view = EditorView::new(&mut self.input_time_editor).theme(time_theme);
         frame.render_widget(time_editor_view, time_inner);
 
-        // Help text at bottom center of entire window
-        let help_text = "Tab: switch fields  •  j/k: navigate  •  h/l: move cursor  •  Enter: confirm  •  Esc: cancel";
+        // Help text at bottom of modal
+        let help_text = vec![Line::from(vec![
+            Span::styled("Tab", Style::default().fg(ACCENT_YELLOW)),
+            Span::raw(" switch fields  •  "),
+            Span::styled("Enter", Style::default().fg(ACCENT_GREEN)),
+            Span::raw(" confirm  •  "),
+            Span::styled("Esc", Style::default().fg(ACCENT_RED)),
+            Span::raw(" cancel"),
+        ])];
         let help_paragraph = Paragraph::new(help_text)
-            .style(Style::default().fg(TEXT_FG))
+            .style(Style::default().bg(NORMAL_BG))
             .alignment(Alignment::Center);
 
-        // Position help text at bottom of the screen
-        let help_area = Rect {
-            x: area.x,
-            y: area.y + area.height - 1,
-            width: area.width,
-            height: 1,
-        };
-
-        frame.render_widget(help_paragraph, help_area);
+        frame.render_widget(help_paragraph, chunks[4]);
 
         // Render the modal border
         let modal_border_color = if self.is_edit_mode {
             BORDER_EDIT
         } else {
-            BORDER_INSERT
+            BORDER_NEW
         };
         let modal_block = Block::default()
             .title(self.title.as_str())
@@ -778,14 +825,11 @@ impl Modal for ConfirmationModal {
     }
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
-        const BORDER_NORMAL: Color = Color::Red;
-        const TEXT_FG: Color = Color::White;
-
         // Message content
         let message_lines: Vec<Line> = self
             .message
             .split('\n')
-            .map(|line| Line::from(Span::styled(line, Style::default().fg(TEXT_FG))))
+            .map(|line| Line::from(Span::styled(line, Style::default().fg(TEXT_WHITE))))
             .collect();
 
         let instructions = vec![
@@ -794,13 +838,13 @@ impl Modal for ConfirmationModal {
                 Span::styled(
                     "y",
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(ACCENT_GREEN)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" to confirm, "),
                 Span::styled(
                     "n/Esc",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    Style::default().fg(ACCENT_RED).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" to cancel"),
             ]),
@@ -835,14 +879,15 @@ impl Modal for ConfirmationModal {
         frame.render_widget(Clear, popup_area);
 
         let message_paragraph = Paragraph::new(all_lines)
-            .style(Style::default().fg(TEXT_FG))
+            .style(Style::default().fg(TEXT_WHITE).bg(NORMAL_BG))
             .alignment(Alignment::Center);
 
         // Render the modal border
         let modal_block = Block::default()
             .title(self.title.as_str())
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER_NORMAL));
+            .border_style(Style::default().fg(BORDER_DANGER))
+            .style(Style::default().bg(NORMAL_BG));
 
         let inner_area = modal_block.inner(popup_area);
         frame.render_widget(modal_block, popup_area);
@@ -933,12 +978,12 @@ impl Modal for PostponeModal {
     }
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
-        // Colors
-        const BORDER_INSERT: Color = Color::Green;
-        const TEXT_FG: Color = Color::White;
-
         let popup_area = centered_rect(60, 25, area);
         frame.render_widget(Clear, popup_area);
+
+        // Render background
+        let bg_block = Block::default().style(Style::default().bg(NORMAL_BG));
+        frame.render_widget(bg_block, popup_area);
 
         let chunks = Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
@@ -953,18 +998,23 @@ impl Modal for PostponeModal {
         let duration_border_color = if self.is_editor_in_insert_mode() {
             BORDER_INSERT
         } else {
-            Color::Rgb(100, 100, 100)
+            BORDER_PROCESSING
         };
 
         let duration_block = Block::default()
             .title("Duration (e.g., \"5min\", \"2 hours\", \"1day\", \"now\", \"now + 30min\")")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(duration_border_color));
+            .border_style(Style::default().fg(duration_border_color))
+            .style(Style::default().bg(NORMAL_BG));
 
         let duration_inner = duration_block.inner(chunks[0]);
         frame.render_widget(duration_block, chunks[0]);
 
-        let duration_theme = EditorTheme::default().hide_status_line();
+        let duration_theme = EditorTheme::default()
+            .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+            .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+            .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+            .hide_status_line();
         let duration_editor_view =
             EditorView::new(&mut self.input_duration_editor).theme(duration_theme);
         frame.render_widget(duration_editor_view, duration_inner);
@@ -974,38 +1024,38 @@ impl Modal for PostponeModal {
             Line::from(vec![Span::styled(
                 "Examples:",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(ACCENT_YELLOW)
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(vec![
                 Span::raw("  • "),
-                Span::styled("5min", Style::default().fg(Color::Cyan)),
+                Span::styled("5min", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" or "),
-                Span::styled("5 minutes", Style::default().fg(Color::Cyan)),
+                Span::styled("5 minutes", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" - 5 minutes from due date"),
             ]),
             Line::from(vec![
                 Span::raw("  • "),
-                Span::styled("2hr", Style::default().fg(Color::Cyan)),
+                Span::styled("2hr", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" or "),
-                Span::styled("2 hours", Style::default().fg(Color::Cyan)),
+                Span::styled("2 hours", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" - 2 hours from due date"),
             ]),
             Line::from(vec![
                 Span::raw("  • "),
-                Span::styled("1day", Style::default().fg(Color::Cyan)),
+                Span::styled("1day", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" or "),
-                Span::styled("1 day", Style::default().fg(Color::Cyan)),
+                Span::styled("1 day", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" - 1 day from due date"),
             ]),
             Line::from(vec![
                 Span::raw("  • "),
-                Span::styled("now", Style::default().fg(Color::Cyan)),
+                Span::styled("now", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" - Set to current time"),
             ]),
             Line::from(vec![
                 Span::raw("  • "),
-                Span::styled("now + 30min", Style::default().fg(Color::Cyan)),
+                Span::styled("now + 30min", Style::default().fg(ACCENT_CYAN)),
                 Span::raw(" - 30 minutes from current time"),
             ]),
             Line::from(""),
@@ -1013,19 +1063,19 @@ impl Modal for PostponeModal {
                 Span::styled(
                     "Enter",
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(ACCENT_GREEN)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" to postpone, "),
                 Span::styled(
                     "Esc",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    Style::default().fg(ACCENT_RED).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" to cancel"),
             ]),
         ])
         .wrap(Wrap { trim: true })
-        .style(Style::default().fg(TEXT_FG));
+        .style(Style::default().fg(TEXT_FG).bg(NORMAL_BG));
 
         frame.render_widget(instructions, chunks[1]);
 
@@ -1033,7 +1083,8 @@ impl Modal for PostponeModal {
         let modal_block = Block::default()
             .title(self.title.as_str())
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER_INSERT));
+            .border_style(Style::default().fg(BORDER_INSERT))
+            .style(Style::default().bg(NORMAL_BG));
 
         frame.render_widget(modal_block, popup_area);
     }

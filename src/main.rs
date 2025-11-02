@@ -1,6 +1,7 @@
 mod action;
 mod app;
 mod auth;
+mod colors;
 mod modal;
 mod tasks;
 mod tui;
