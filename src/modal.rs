@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::KeyEvent;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, Lines};
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
@@ -12,6 +12,7 @@ use crate::tui::Frame as TuiFrame;
 use crate::ui::{centered_rect, InputField};
 
 /// Trait for modal dialogs that can be displayed as overlays
+#[allow(dead_code)]
 pub trait Modal {
     /// Get the title of the modal
     fn title(&self) -> &str;
@@ -42,12 +43,13 @@ pub struct TaskModal {
     current_input_field: InputField,
     event_handler: EditorEventHandler,
     is_edit_mode: bool,
+    desired_column: usize,
 }
 
 impl TaskModal {
-    pub fn new(title: &str) -> Self {
+    pub fn new(title: String) -> Self {
         Self {
-            title: title.to_string(),
+            title,
             input_title_editor: EditorState::default(),
             input_description_editor: EditorState::default(),
             input_date_editor: EditorState::default(),
@@ -55,6 +57,7 @@ impl TaskModal {
             current_input_field: InputField::Title,
             event_handler: EditorEventHandler::default(),
             is_edit_mode: false,
+            desired_column: 0,
         }
     }
 
@@ -66,7 +69,7 @@ impl TaskModal {
         default_time: Option<String>,
         is_edit_mode: bool,
     ) -> Self {
-        let mut modal = Self::new(title);
+        let mut modal = Self::new(title.to_string());
         modal.is_edit_mode = is_edit_mode;
 
         if let Some(task_title) = default_title {
@@ -167,9 +170,11 @@ impl TaskModal {
         // Position cursor at the end of the text
         if editor.lines.is_empty() {
             editor.cursor = Index2::new(0, 0);
+            self.desired_column = 0;
         } else if let Some(last_row_idx) = editor.lines.len().checked_sub(1) {
             if let Some(last_col) = editor.lines.len_col(last_row_idx) {
                 editor.cursor = Index2::new(last_row_idx, last_col);
+                self.desired_column = last_col;
             }
         }
     }
@@ -177,6 +182,27 @@ impl TaskModal {
     pub fn position_cursor_at_start(&mut self) {
         let editor = self.get_current_editor_mut();
         editor.cursor = Index2::new(0, 0);
+        self.desired_column = 0;
+    }
+
+    pub fn position_cursor_at_desired_column(&mut self, row: usize) {
+        let desired_col = self.desired_column;
+        let editor = self.get_current_editor_mut();
+
+        // Get the length of the target row
+        let target_col = if let Some(row_len) = editor.lines.len_col(row) {
+            // Position at desired column, but don't go beyond the end of the line
+            desired_col.min(row_len)
+        } else {
+            0
+        };
+
+        editor.cursor = Index2::new(row, target_col);
+    }
+
+    pub fn update_desired_column(&mut self) {
+        let editor = self.get_current_editor();
+        self.desired_column = editor.cursor.col;
     }
 
     fn is_at_first_line_in_multiline_field(&self) -> bool {
@@ -204,6 +230,7 @@ impl TaskModal {
             // If in description field, go to first line
             let editor = self.get_current_editor_mut();
             editor.cursor = Index2::new(0, 0);
+            self.desired_column = 0;
         } else {
             // Go to first field (Title)
             self.current_input_field = InputField::Title;
@@ -218,10 +245,13 @@ impl TaskModal {
         if self.current_input_field == InputField::Description {
             // If in description field, go to last line
             let editor = self.get_current_editor_mut();
-            if !editor.lines.is_empty() {
-                let last_row_idx = editor.lines.len().saturating_sub(1);
+            if editor.lines.is_empty() {
+                editor.cursor = Index2::new(0, 0);
+                self.desired_column = 0;
+            } else if let Some(last_row_idx) = editor.lines.len().checked_sub(1) {
                 if let Some(last_col) = editor.lines.len_col(last_row_idx) {
                     editor.cursor = Index2::new(last_row_idx, last_col);
+                    self.desired_column = last_col;
                 }
             }
         } else {
@@ -240,7 +270,8 @@ impl TaskModal {
             if self.is_at_last_line_in_multiline_field() {
                 // Move to next field
                 self.next_input_field();
-                self.position_cursor_at_start();
+                // Position cursor at desired column on first row of next field
+                self.position_cursor_at_desired_column(0);
                 if self.is_edit_mode {
                     self.set_current_editor_to_normal_mode();
                 }
@@ -252,11 +283,11 @@ impl TaskModal {
         } else {
             // In single-line field, move to next field
             self.next_input_field();
-            // When moving down with j, position cursor at start of next field
+            // Position cursor at desired column on first row of next field
             if self.current_input_field == InputField::Description {
-                self.position_cursor_at_start();
+                self.position_cursor_at_desired_column(0);
             } else {
-                self.position_cursor_at_start();
+                self.position_cursor_at_desired_column(0);
             }
             if self.is_edit_mode {
                 self.set_current_editor_to_normal_mode();
@@ -271,7 +302,16 @@ impl TaskModal {
             if self.is_at_first_line_in_multiline_field() {
                 // Move to previous field
                 self.previous_input_field();
-                self.position_cursor_at_end();
+                // Position cursor at desired column on last row of previous field
+                let last_row = {
+                    let editor = self.get_current_editor();
+                    if editor.lines.is_empty() {
+                        0
+                    } else {
+                        editor.lines.len().saturating_sub(1)
+                    }
+                };
+                self.position_cursor_at_desired_column(last_row);
                 if self.is_edit_mode {
                     self.set_current_editor_to_normal_mode();
                 }
@@ -283,8 +323,16 @@ impl TaskModal {
         } else {
             // In single-line field, move to previous field
             self.previous_input_field();
-            // When moving up with k, position cursor at end of previous field
-            self.position_cursor_at_end();
+            // Position cursor at desired column on last row of previous field
+            let last_row = {
+                let editor = self.get_current_editor();
+                if editor.lines.is_empty() {
+                    0
+                } else {
+                    editor.lines.len().saturating_sub(1)
+                }
+            };
+            self.position_cursor_at_desired_column(last_row);
             if self.is_edit_mode {
                 self.set_current_editor_to_normal_mode();
             }
@@ -332,6 +380,13 @@ impl TaskModal {
                     .on_key_event(key_event, &mut self.input_time_editor);
             }
         }
+        Ok(())
+    }
+
+    pub fn handle_input_key_event_and_update_column(&mut self, key_event: KeyEvent) -> Result<()> {
+        self.handle_input_key_event(key_event)?;
+        // Update desired column after handling input that may change cursor position
+        self.update_desired_column();
         Ok(())
     }
 }
@@ -482,8 +537,30 @@ impl Modal for TaskModal {
                     Ok(true)
                 }
             }
+            KeyCode::Char('h') | KeyCode::Left => {
+                // Handle horizontal movement - update desired column
+                self.handle_input_key_event_and_update_column(key_event)?;
+                Ok(true)
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                // Handle horizontal movement - update desired column
+                self.handle_input_key_event_and_update_column(key_event)?;
+                Ok(true)
+            }
+            KeyCode::Backspace | KeyCode::Delete => {
+                // Handle deletion - update desired column
+                self.handle_input_key_event_and_update_column(key_event)?;
+                Ok(true)
+            }
+            KeyCode::Home | KeyCode::End => {
+                // Handle home/end keys - update desired column
+                self.handle_input_key_event_and_update_column(key_event)?;
+                Ok(true)
+            }
             _ => {
-                self.handle_input_key_event(key_event)?;
+                // For all other keys (including text input), handle normally and update desired column
+                // This catches regular text input while avoiding conflicts with vim keys handled above
+                self.handle_input_key_event_and_update_column(key_event)?;
                 Ok(true)
             }
         }
@@ -493,6 +570,7 @@ impl Modal for TaskModal {
         // Colors
         const BORDER_NORMAL: Color = Color::Rgb(100, 100, 100);
         const BORDER_INSERT: Color = Color::Green;
+        const BORDER_EDIT: Color = Color::Blue;
         const TEXT_FG: Color = Color::White;
 
         let popup_area = centered_rect(60, 40, area);
@@ -506,7 +584,6 @@ impl Modal for TaskModal {
                 Constraint::Length(8), // Description field
                 Constraint::Length(3), // Date field
                 Constraint::Length(3), // Time field
-                Constraint::Min(1),    // Instructions
             ])
             .split(popup_area);
 
@@ -611,49 +688,32 @@ impl Modal for TaskModal {
         let time_editor_view = EditorView::new(&mut self.input_time_editor).theme(time_theme);
         frame.render_widget(time_editor_view, time_inner);
 
-        // Instructions
-        let instructions = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled(
-                    "Tab",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" / "),
-                Span::styled(
-                    "Shift+Tab",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" to switch fields"),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    "Enter",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" to confirm, "),
-                Span::styled(
-                    "Esc",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" to cancel"),
-            ]),
-        ])
-        .wrap(Wrap { trim: true })
-        .style(Style::default().fg(TEXT_FG));
+        // Help text at bottom center of entire window
+        let help_text = "Tab: switch fields  •  j/k: navigate  •  h/l: move cursor  •  Enter: confirm  •  Esc: cancel";
+        let help_paragraph = Paragraph::new(help_text)
+            .style(Style::default().fg(TEXT_FG))
+            .alignment(Alignment::Center);
 
-        frame.render_widget(instructions, chunks[4]);
+        // Position help text at bottom of the screen
+        let help_area = Rect {
+            x: area.x,
+            y: area.y + area.height - 1,
+            width: area.width,
+            height: 1,
+        };
+
+        frame.render_widget(help_paragraph, help_area);
 
         // Render the modal border
+        let modal_border_color = if self.is_edit_mode {
+            BORDER_EDIT
+        } else {
+            BORDER_INSERT
+        };
         let modal_block = Block::default()
             .title(self.title.as_str())
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER_INSERT));
+            .border_style(Style::default().fg(modal_border_color));
 
         frame.render_widget(modal_block, popup_area);
     }
@@ -721,9 +781,6 @@ impl Modal for ConfirmationModal {
         const BORDER_NORMAL: Color = Color::Red;
         const TEXT_FG: Color = Color::White;
 
-        let popup_area = centered_rect(50, 20, area);
-        frame.render_widget(Clear, popup_area);
-
         // Message content
         let message_lines: Vec<Line> = self
             .message
@@ -752,10 +809,34 @@ impl Modal for ConfirmationModal {
         let mut all_lines = message_lines;
         all_lines.extend(instructions);
 
+        // Calculate content dimensions
+        let max_line_width = all_lines
+            .iter()
+            .map(|line| line.width())
+            .max()
+            .unwrap_or(20);
+        let content_height = all_lines.len();
+
+        // Add padding for borders and title, but keep it minimal
+        let modal_width = (max_line_width + 4).min(area.width as usize) as u16; // +4 for left/right borders and padding
+        let modal_height = (content_height + 3) as u16; // +3 for top/bottom borders and title
+
+        // Center the tight modal
+        let popup_x = (area.width.saturating_sub(modal_width)) / 2;
+        let popup_y = (area.height.saturating_sub(modal_height)) / 2;
+
+        let popup_area = Rect {
+            x: area.x + popup_x,
+            y: area.y + popup_y,
+            width: modal_width,
+            height: modal_height,
+        };
+
+        frame.render_widget(Clear, popup_area);
+
         let message_paragraph = Paragraph::new(all_lines)
-            .wrap(Wrap { trim: true })
             .style(Style::default().fg(TEXT_FG))
-            .alignment(ratatui::layout::Alignment::Center);
+            .alignment(Alignment::Center);
 
         // Render the modal border
         let modal_block = Block::default()
