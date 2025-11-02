@@ -80,8 +80,8 @@ pub const DATE_NORMAL: Color = Color::Rgb(100, 100, 100);
 /// Yellow accent for labels and warnings
 pub const ACCENT_YELLOW: Color = Color::Yellow;
 
-/// Cyan accent for examples and hints
-pub const ACCENT_CYAN: Color = Color::Cyan;
+// /// Cyan accent for examples and hints
+// pub const ACCENT_CYAN: Color = Color::Cyan;
 
 /// Green accent for success/confirmation
 pub const ACCENT_GREEN: Color = Color::Green;

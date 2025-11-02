@@ -118,6 +118,7 @@ impl App {
                     Action::NextTab => self.next_tab(),
 
                     Action::CompleteTask => self.complete_task(action_tx.clone()),
+                    Action::StartCompleteTask => self.start_complete_task(),
                     Action::StartDeleteTask => self.start_delete_task(),
                     Action::DeleteTask => self.delete_task(action_tx.clone()),
                     Action::StartPostponeTask => self.start_postpone_task(),
@@ -353,8 +354,8 @@ impl App {
             let current_tab = self.ui.get_current_tab();
             if let Some(_task) = self.get_view_tasks(current_tab).get(task_index) {
                 // Default to 1 day from now
-                let modal =
-                    PostponeModal::new_with_default("Postpone Task", Some("1 day".to_string()));
+                let mut modal = PostponeModal::new("Postpone Task");
+                modal.set_editor_to_insert_mode();
 
                 self.mode = Mode::Insert;
                 self.ui.start_modal(modal);
@@ -388,6 +389,30 @@ impl App {
         };
 
         let modal = ConfirmationModal::new("Delete Task", &message);
+        self.ui.start_modal(modal);
+    }
+
+    fn start_complete_task(&mut self) {
+        let selected_indices = self.ui.get_selected_indices();
+        if selected_indices.is_empty() {
+            return;
+        }
+
+        let count = selected_indices.len();
+        let message = if count == 1 {
+            "Are you sure you want to mark this task as complete?".to_string()
+        } else {
+            format!(
+                "Are you sure you want to mark these {} tasks as complete?",
+                count
+            )
+        };
+
+        let modal = ConfirmationModal::new_with_type(
+            "Complete Task",
+            &message,
+            crate::modal::ConfirmationType::Complete,
+        );
         self.ui.start_modal(modal);
     }
 
@@ -459,11 +484,25 @@ impl App {
         }
     }
     fn confirm_input(&mut self, tx: UnboundedSender<Action>) {
-        // Handle confirmation modal (for delete confirmation)
+        // Handle confirmation modal (for delete or complete confirmation)
         if self.ui.has_modal() && self.mode != Mode::Insert {
-            // This is a confirmation modal, trigger the delete action
+            // Check what type of confirmation modal this is
+            let confirmation_type = self.ui.get_confirmation_type().cloned();
             self.ui.close_modal();
-            tx.send(Action::DeleteTask).unwrap();
+
+            if let Some(confirmation_type) = confirmation_type {
+                match confirmation_type {
+                    crate::modal::ConfirmationType::Delete => {
+                        tx.send(Action::DeleteTask).unwrap();
+                    }
+                    crate::modal::ConfirmationType::Complete => {
+                        tx.send(Action::CompleteTask).unwrap();
+                    }
+                }
+            } else {
+                // Fallback for other modal types - assume delete for backward compatibility
+                tx.send(Action::DeleteTask).unwrap();
+            }
             return;
         }
 
@@ -775,7 +814,7 @@ impl App {
                 KeyCode::Esc => action_tx.send(Action::SelectNone)?,
                 KeyCode::Char('r') => action_tx.send(Action::RefreshTasks)?,
                 KeyCode::Char('n') => action_tx.send(Action::StartCreateTask)?,
-                KeyCode::Char('e') => action_tx.send(Action::CompleteTask)?,
+                KeyCode::Char('e') => action_tx.send(Action::StartCompleteTask)?,
                 KeyCode::Char('d') => action_tx.send(Action::StartDeleteTask)?,
                 KeyCode::Char('p') => {
                     if key
@@ -864,6 +903,7 @@ impl App {
                 KeyCode::BackTab => action_tx.send(Action::SelectPreviousCycling)?,
                 KeyCode::Char('g') | KeyCode::Home => action_tx.send(Action::SelectFirst)?,
                 KeyCode::Char('G') | KeyCode::End => action_tx.send(Action::SelectLast)?,
+                KeyCode::Char('e') => action_tx.send(Action::StartCompleteTask)?,
                 KeyCode::Char('d') => action_tx.send(Action::StartDeleteTask)?,
 
                 KeyCode::Char('p') => {

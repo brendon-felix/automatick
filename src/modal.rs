@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use crate::colors::*;
@@ -17,6 +17,9 @@ use crate::ui::{centered_rect, InputField};
 pub trait Modal {
     /// Get the title of the modal
     fn title(&self) -> &str;
+
+    /// Allow downcasting to concrete types
+    fn as_any(&self) -> &dyn std::any::Any;
 
     /// Handle key events for the modal
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<bool>;
@@ -422,6 +425,10 @@ impl TaskModal {
 impl Modal for TaskModal {
     fn title(&self) -> &str {
         &self.title
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<bool> {
@@ -903,9 +910,16 @@ impl Modal for TaskModal {
 }
 
 /// Modal for confirming destructive actions like deleting tasks
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfirmationType {
+    Delete,
+    Complete,
+}
+
 pub struct ConfirmationModal {
     title: String,
     message: String,
+    confirmation_type: ConfirmationType,
 }
 
 impl ConfirmationModal {
@@ -913,13 +927,30 @@ impl ConfirmationModal {
         Self {
             title: title.to_string(),
             message: message.to_string(),
+            confirmation_type: ConfirmationType::Delete, // Default for backward compatibility
         }
+    }
+
+    pub fn new_with_type(title: &str, message: &str, confirmation_type: ConfirmationType) -> Self {
+        Self {
+            title: title.to_string(),
+            message: message.to_string(),
+            confirmation_type,
+        }
+    }
+
+    pub fn confirmation_type(&self) -> &ConfirmationType {
+        &self.confirmation_type
     }
 }
 
 impl Modal for ConfirmationModal {
     fn title(&self) -> &str {
         &self.title
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn handle_key_event(&mut self, _key_event: KeyEvent) -> Result<bool> {
@@ -988,11 +1019,17 @@ impl Modal for ConfirmationModal {
             .style(Style::default().fg(TEXT_WHITE).bg(NORMAL_BG))
             .alignment(Alignment::Center);
 
+        // Choose border color based on confirmation type
+        let border_color = match self.confirmation_type {
+            ConfirmationType::Delete => BORDER_DANGER,
+            ConfirmationType::Complete => ACCENT_GREEN,
+        };
+
         // Render the modal border
         let modal_block = Block::default()
             .title(self.title.as_str())
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER_DANGER))
+            .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(NORMAL_BG));
 
         let inner_area = modal_block.inner(popup_area);
@@ -1106,6 +1143,10 @@ impl PostponeModal {
 impl Modal for PostponeModal {
     fn title(&self) -> &str {
         &self.title
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<bool> {
@@ -1281,7 +1322,7 @@ impl Modal for PostponeModal {
     }
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
-        let popup_area = centered_rect(60, 27, area);
+        let popup_area = centered_rect(45, 15, area);
         frame.render_widget(Clear, popup_area);
 
         // Render background
@@ -1293,7 +1334,7 @@ impl Modal for PostponeModal {
             .margin(1)
             .constraints([
                 Constraint::Length(4), // Duration field + error message
-                Constraint::Min(1),    // Instructions
+                Constraint::Length(1), // Help text
             ])
             .split(popup_area);
 
@@ -1344,65 +1385,18 @@ impl Modal for PostponeModal {
             frame.render_widget(error_paragraph, duration_field_layout[1]);
         }
 
-        // Instructions
-        let instructions = Paragraph::new(vec![
-            Line::from(vec![Span::styled(
-                "Examples:",
-                Style::default()
-                    .fg(ACCENT_YELLOW)
-                    .add_modifier(Modifier::BOLD),
-            )]),
-            Line::from(vec![
-                Span::raw("  • "),
-                Span::styled("5min", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" or "),
-                Span::styled("5 minutes", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" - 5 minutes from due date"),
-            ]),
-            Line::from(vec![
-                Span::raw("  • "),
-                Span::styled("2hr", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" or "),
-                Span::styled("2 hours", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" - 2 hours from due date"),
-            ]),
-            Line::from(vec![
-                Span::raw("  • "),
-                Span::styled("1day", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" or "),
-                Span::styled("1 day", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" - 1 day from due date"),
-            ]),
-            Line::from(vec![
-                Span::raw("  • "),
-                Span::styled("now", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" - Set to current time"),
-            ]),
-            Line::from(vec![
-                Span::raw("  • "),
-                Span::styled("now + 30min", Style::default().fg(ACCENT_CYAN)),
-                Span::raw(" - 30 minutes from current time"),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "Enter",
-                    Style::default()
-                        .fg(ACCENT_GREEN)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" to postpone, "),
-                Span::styled(
-                    "Esc",
-                    Style::default().fg(ACCENT_RED).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" to cancel"),
-            ]),
-        ])
-        .wrap(Wrap { trim: true })
-        .style(Style::default().fg(TEXT_FG).bg(NORMAL_BG));
+        // Help text at bottom of modal (matching TaskModal style)
+        let help_text = vec![Line::from(vec![
+            Span::styled("Enter", Style::default().fg(ACCENT_GREEN)),
+            Span::raw(" confirm  •  "),
+            Span::styled("Esc", Style::default().fg(ACCENT_RED)),
+            Span::raw(" cancel"),
+        ])];
+        let help_paragraph = Paragraph::new(help_text)
+            .style(Style::default().bg(NORMAL_BG))
+            .alignment(Alignment::Center);
 
-        frame.render_widget(instructions, chunks[1]);
+        frame.render_widget(help_paragraph, chunks[1]);
 
         // Render the modal border
         let modal_border_color = if self.is_edit_mode {

@@ -211,6 +211,22 @@ impl TaskListUI {
         }
     }
 
+    pub fn get_confirmation_type(&self) -> Option<&crate::modal::ConfirmationType> {
+        if let Some(modal) = &self.current_modal {
+            if let Some(confirmation_modal) = modal
+                .as_ref()
+                .as_any()
+                .downcast_ref::<crate::modal::ConfirmationModal>()
+            {
+                Some(confirmation_modal.confirmation_type())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn next_tab(&mut self) {
         self.current_tab = match self.current_tab {
             ViewTab::Today => ViewTab::Week,

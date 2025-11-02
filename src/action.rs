@@ -44,6 +44,8 @@ pub enum Action {
     // Task actions
     /// Mark task as complete
     CompleteTask,
+    /// Start complete task confirmation
+    StartCompleteTask,
     /// Start delete task confirmation
     StartDeleteTask,
     /// Delete selected task
