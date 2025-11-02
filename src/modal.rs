@@ -1018,6 +1018,7 @@ pub struct PostponeModal {
     title: String,
     input_duration_editor: EditorState,
     event_handler: EditorEventHandler,
+    is_edit_mode: bool,
     // Validation state
     validation_attempted: bool,
     duration_error: Option<String>,
@@ -1029,6 +1030,7 @@ impl PostponeModal {
             title: title.to_string(),
             input_duration_editor: EditorState::default(),
             event_handler: EditorEventHandler::default(),
+            is_edit_mode: false,
             validation_attempted: false,
             duration_error: None,
         }
@@ -1042,14 +1044,31 @@ impl PostponeModal {
         }
 
         // Set initial mode and cursor position
-        modal.set_editor_to_insert_mode();
         modal.position_cursor_at_end();
+        modal.set_editor_to_insert_mode();
 
+        modal
+    }
+
+    #[allow(dead_code)]
+    pub fn new_for_edit(title: &str, default_duration: Option<String>) -> Self {
+        let mut modal = Self::new_with_default(title, default_duration);
+        modal.is_edit_mode = true;
+        // For edit mode, start in Normal mode like TaskModal
+        modal.set_editor_to_normal_mode();
         modal
     }
 
     pub fn set_editor_to_insert_mode(&mut self) {
         self.input_duration_editor.mode = EditorMode::Insert;
+    }
+
+    pub fn set_editor_to_normal_mode(&mut self) {
+        self.input_duration_editor.mode = EditorMode::Normal;
+    }
+
+    pub fn position_cursor_at_start(&mut self) {
+        self.input_duration_editor.cursor = Index2::new(0, 0);
     }
 
     pub fn position_cursor_at_end(&mut self) {
@@ -1090,8 +1109,175 @@ impl Modal for PostponeModal {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<bool> {
-        self.handle_input_key_event(key_event)?;
-        Ok(true)
+        use crossterm::event::KeyCode;
+
+        match key_event.code {
+            KeyCode::Esc => {
+                // If editor is in insert mode, switch to normal mode
+                if self.is_editor_in_insert_mode() {
+                    self.set_editor_to_normal_mode();
+                    Ok(true)
+                } else {
+                    // Already in normal mode, let app handle it (close modal)
+                    Ok(false)
+                }
+            }
+            KeyCode::Enter => {
+                // For single-line duration field, always confirm input (both normal and insert mode)
+                Ok(false)
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                // Handle horizontal movement
+                self.handle_input_key_event(key_event)?;
+                Ok(true)
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                // Handle horizontal movement
+                self.handle_input_key_event(key_event)?;
+                Ok(true)
+            }
+            KeyCode::Char('0') => {
+                // Handle home key (beginning of line) - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    self.position_cursor_at_start();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('$') => {
+                // Handle end key (end of line) - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    self.position_cursor_at_end();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('i') => {
+                // Enter insert mode - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    self.set_editor_to_insert_mode();
+                    Ok(true)
+                } else {
+                    // Already in insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('a') => {
+                // Enter insert mode after cursor - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    // Move cursor one position right, then enter insert mode
+                    self.handle_input_key_event(KeyEvent::new(
+                        KeyCode::Right,
+                        crossterm::event::KeyModifiers::NONE,
+                    ))?;
+                    self.set_editor_to_insert_mode();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('A') => {
+                // Enter insert mode at end of line - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    self.position_cursor_at_end();
+                    self.set_editor_to_insert_mode();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('I') => {
+                // Enter insert mode at beginning of line - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    self.position_cursor_at_start();
+                    self.set_editor_to_insert_mode();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Home | KeyCode::End => {
+                // Handle home/end keys
+                self.handle_input_key_event(key_event)?;
+                Ok(true)
+            }
+            KeyCode::Char('x') => {
+                // Delete character under cursor - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    self.handle_input_key_event(KeyEvent::new(
+                        KeyCode::Delete,
+                        crossterm::event::KeyModifiers::NONE,
+                    ))?;
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('X') => {
+                // Delete character before cursor - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    self.handle_input_key_event(KeyEvent::new(
+                        KeyCode::Backspace,
+                        crossterm::event::KeyModifiers::NONE,
+                    ))?;
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('d') => {
+                // Delete line (dd) - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    // Clear the entire content
+                    self.input_duration_editor = EditorState::default();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Char('c') => {
+                // Change line (cc) - clear content and enter insert mode - only in normal mode
+                if !self.is_editor_in_insert_mode() {
+                    // Clear the entire content and enter insert mode
+                    self.input_duration_editor = EditorState::default();
+                    self.set_editor_to_insert_mode();
+                    Ok(true)
+                } else {
+                    // In insert mode, let editor handle normally
+                    self.handle_input_key_event(key_event)?;
+                    Ok(true)
+                }
+            }
+            KeyCode::Backspace | KeyCode::Delete => {
+                // Handle deletion
+                self.handle_input_key_event(key_event)?;
+                Ok(true)
+            }
+            _ => {
+                // For all other keys (including text input), handle normally
+                self.handle_input_key_event(key_event)?;
+                Ok(true)
+            }
+        }
     }
 
     fn render(&mut self, frame: &mut TuiFrame, area: Rect) {
@@ -1124,7 +1310,11 @@ impl Modal for PostponeModal {
         let duration_border_color = if duration_has_error {
             ACCENT_RED
         } else if self.is_editor_in_insert_mode() {
-            BORDER_INSERT
+            if self.is_edit_mode {
+                BORDER_EDIT
+            } else {
+                BORDER_NEW
+            }
         } else {
             BORDER_PROCESSING
         };
@@ -1215,11 +1405,15 @@ impl Modal for PostponeModal {
         frame.render_widget(instructions, chunks[1]);
 
         // Render the modal border
+        let modal_border_color = if self.is_edit_mode {
+            BORDER_EDIT
+        } else {
+            BORDER_NEW
+        };
         let modal_block = Block::default()
             .title(self.title.as_str())
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER_INSERT))
-            .style(Style::default().bg(NORMAL_BG));
+            .border_style(Style::default().fg(modal_border_color));
 
         frame.render_widget(modal_block, popup_area);
     }
