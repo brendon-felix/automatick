@@ -12,10 +12,11 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::{
     action::Action,
-    modal::{ConfirmationModal, PostponeModal, TaskModal},
     tasks::{self, fetch_all_tasks},
-    tui::{self, Event, Tui},
-    ui::{TaskListUI, ViewTab},
+    ui::{
+        self, AppUI, ConfirmationModal, ConfirmationType, Event, PostponeModal, TaskModal, Tui,
+        ViewTab,
+    },
     utils::{self, parse_date_us_format, parse_time_us_format},
 };
 
@@ -32,7 +33,7 @@ pub enum Mode {
 pub struct App {
     pub should_quit: bool,
     pub mode: Mode,
-    pub ui: TaskListUI,
+    pub ui: AppUI,
     pub client: Arc<TickTick>,
     pub error_message: Option<String>,
     pub error_ticks: u8,
@@ -48,7 +49,7 @@ pub struct App {
 
 impl App {
     pub fn new(client: Arc<TickTick>) -> Result<Self> {
-        let ui = TaskListUI::new();
+        let ui = AppUI::new();
         Ok(Self {
             should_quit: false,
             mode: Mode::Normal,
@@ -70,7 +71,7 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         let (action_tx, mut action_rx) = mpsc::unbounded_channel();
 
-        let mut tui = tui::Tui::new()?;
+        let mut tui = ui::Tui::new()?;
         tui.enter()?;
 
         // Initial load of tasks
@@ -102,49 +103,49 @@ impl App {
 
                     Action::SelectPrevious => {
                         self.save_task_before_changing_selection(action_tx.clone());
-                        let current_tab = self.ui.current_tab;
+                        let current_tab = self.ui.task_list.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
-                        self.ui.select_previous(tasks.len());
+                        self.ui.task_list.select_previous(tasks.len());
                         self.sync_task_editor_with_selection();
                     }
                     Action::SelectNext => {
                         self.save_task_before_changing_selection(action_tx.clone());
-                        let current_tab = self.ui.current_tab;
+                        let current_tab = self.ui.task_list.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
-                        self.ui.select_next(tasks.len());
+                        self.ui.task_list.select_next(tasks.len());
                         self.sync_task_editor_with_selection();
                     }
                     Action::SelectPreviousCycling => {
                         self.save_task_before_changing_selection(action_tx.clone());
-                        let current_tab = self.ui.current_tab;
+                        let current_tab = self.ui.task_list.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
-                        self.ui.select_previous_cycling(tasks.len());
+                        self.ui.task_list.select_previous_cycling(tasks.len());
                         self.sync_task_editor_with_selection();
                     }
                     Action::SelectNextCycling => {
                         self.save_task_before_changing_selection(action_tx.clone());
-                        let current_tab = self.ui.current_tab;
+                        let current_tab = self.ui.task_list.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
-                        self.ui.select_next_cycling(tasks.len());
+                        self.ui.task_list.select_next_cycling(tasks.len());
                         self.sync_task_editor_with_selection();
                     }
                     Action::SelectFirst => {
                         self.save_task_before_changing_selection(action_tx.clone());
-                        let current_tab = self.ui.current_tab;
+                        let current_tab = self.ui.task_list.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
-                        self.ui.select_first(tasks.len());
+                        self.ui.task_list.select_first(tasks.len());
                         self.sync_task_editor_with_selection();
                     }
                     Action::SelectLast => {
                         self.save_task_before_changing_selection(action_tx.clone());
-                        let current_tab = self.ui.current_tab;
+                        let current_tab = self.ui.task_list.current_tab;
                         let tasks = self.get_view_tasks(current_tab);
-                        self.ui.select_last(tasks.len());
+                        self.ui.task_list.select_last(tasks.len());
                         self.sync_task_editor_with_selection();
                     }
                     Action::SelectNone => {
                         self.save_task_before_changing_selection(action_tx.clone());
-                        self.ui.select_none();
+                        self.ui.task_list.select_none();
                         self.sync_task_editor_with_selection();
                     }
 
@@ -169,20 +170,20 @@ impl App {
 
                     Action::EnterNormal => {
                         self.mode = Mode::Normal;
-                        self.ui.exit_visual_mode();
+                        self.ui.task_list.exit_visual_mode();
                     }
                     Action::EnterInsert => {
                         self.mode = Mode::Insert;
-                        self.ui.exit_visual_mode();
+                        self.ui.task_list.exit_visual_mode();
                     }
                     Action::EnterVisual => {
                         self.mode = Mode::Visual;
-                        self.ui.enter_visual_mode();
+                        self.ui.task_list.enter_visual_mode();
                     }
                     Action::EnterProcessing => self.mode = Mode::Processing,
                     Action::ExitProcessing => {
                         self.mode = Mode::Normal;
-                        self.ui.exit_visual_mode();
+                        self.ui.task_list.exit_visual_mode();
                     }
 
                     Action::EnterTaskEditor => self.enter_task_editor(),
@@ -226,12 +227,12 @@ impl App {
         self.tasks_loaded = true;
 
         // Update UI with current view's tasks
-        let current_tasks = match self.ui.get_current_tab() {
+        let current_tasks = match self.ui.task_list.get_current_tab() {
             ViewTab::Today => &self.today_cache,
             ViewTab::Week => &self.week_cache,
             ViewTab::Inbox => &self.inbox_cache,
         };
-        self.ui.set_tasks(current_tasks);
+        self.ui.task_list.set_tasks(current_tasks);
         self.sync_task_editor_with_selection();
     }
 
@@ -253,7 +254,7 @@ impl App {
     }
 
     fn render(&mut self, tui: &mut Tui) -> Result<()> {
-        self.current_tab = self.ui.get_current_tab();
+        self.current_tab = self.ui.task_list.get_current_tab();
         let tasks: &[Task] = match self.current_tab {
             ViewTab::Today => &self.today_cache,
             ViewTab::Week => &self.week_cache,
@@ -310,9 +311,9 @@ impl App {
     }
 
     fn complete_task(&mut self, tx: UnboundedSender<Action>) {
-        let selected_indices = self.ui.get_selected_indices();
+        let selected_indices = self.ui.task_list.get_selected_indices();
         if !selected_indices.is_empty() {
-            let current_tab = self.ui.get_current_tab();
+            let current_tab = self.ui.task_list.get_current_tab();
             let tasks_to_complete: Vec<_> = selected_indices
                 .iter()
                 .filter_map(|&index| self.get_view_tasks(current_tab).get(index))
@@ -353,9 +354,9 @@ impl App {
     }
 
     fn delete_task(&mut self, tx: UnboundedSender<Action>) {
-        let selected_indices = self.ui.get_selected_indices();
+        let selected_indices = self.ui.task_list.get_selected_indices();
         if !selected_indices.is_empty() {
-            let current_tab = self.ui.get_current_tab();
+            let current_tab = self.ui.task_list.get_current_tab();
             let tasks_to_delete: Vec<_> = selected_indices
                 .iter()
                 .filter_map(|&index| self.get_view_tasks(current_tab).get(index))
@@ -402,15 +403,15 @@ impl App {
     }
 
     fn start_postpone_task(&mut self) {
-        if let Some(task_index) = self.ui.selected_index() {
-            let current_tab = self.ui.get_current_tab();
+        if let Some(task_index) = self.ui.task_list.selected_index() {
+            let current_tab = self.ui.task_list.get_current_tab();
             if let Some(_task) = self.get_view_tasks(current_tab).get(task_index) {
                 // Default to 1 day from now
                 let mut modal = PostponeModal::new("Postpone Task");
                 modal.set_editor_to_insert_mode();
 
                 self.mode = Mode::Insert;
-                self.ui.start_modal(modal);
+                self.ui.task_list.start_modal(modal);
             }
         }
     }
@@ -424,11 +425,11 @@ impl App {
             None
         };
         let modal = TaskModal::new_with_defaults("New Task", None, None, default_date, None, false);
-        self.ui.start_modal(modal);
+        self.ui.task_list.start_modal(modal);
     }
 
     fn start_delete_task(&mut self) {
-        let selected_indices = self.ui.get_selected_indices();
+        let selected_indices = self.ui.task_list.get_selected_indices();
         if selected_indices.is_empty() {
             return;
         }
@@ -441,11 +442,11 @@ impl App {
         };
 
         let modal = ConfirmationModal::new("Delete Task", &message);
-        self.ui.start_modal(modal);
+        self.ui.task_list.start_modal(modal);
     }
 
     fn start_complete_task(&mut self) {
-        let selected_indices = self.ui.get_selected_indices();
+        let selected_indices = self.ui.task_list.get_selected_indices();
         if selected_indices.is_empty() {
             return;
         }
@@ -460,17 +461,14 @@ impl App {
             )
         };
 
-        let modal = ConfirmationModal::new_with_type(
-            "Complete Task",
-            &message,
-            crate::modal::ConfirmationType::Complete,
-        );
-        self.ui.start_modal(modal);
+        let modal =
+            ConfirmationModal::new_with_type("Complete Task", &message, ConfirmationType::Complete);
+        self.ui.task_list.start_modal(modal);
     }
 
     fn start_edit_task(&mut self) {
-        if let Some(task_index) = self.ui.selected_index() {
-            let current_tab = self.ui.get_current_tab();
+        if let Some(task_index) = self.ui.task_list.selected_index() {
+            let current_tab = self.ui.task_list.get_current_tab();
 
             let task_data = self
                 .get_view_tasks(current_tab)
@@ -531,7 +529,7 @@ impl App {
                     task_time,
                     true,
                 );
-                self.ui.start_modal(modal);
+                self.ui.task_list.start_modal(modal);
             }
         }
     }
@@ -546,17 +544,17 @@ impl App {
         }
 
         // Handle confirmation modal (for delete or complete confirmation)
-        if self.ui.has_modal() && self.mode != Mode::Insert {
+        if self.ui.task_list.has_modal() && self.mode != Mode::Insert {
             // Check what type of confirmation modal this is
-            let confirmation_type = self.ui.get_confirmation_type().cloned();
-            self.ui.close_modal();
+            let confirmation_type = self.ui.task_list.get_confirmation_type().cloned();
+            self.ui.task_list.close_modal();
 
             if let Some(confirmation_type) = confirmation_type {
                 match confirmation_type {
-                    crate::modal::ConfirmationType::Delete => {
+                    ConfirmationType::Delete => {
                         tx.send(Action::DeleteTask).unwrap();
                     }
-                    crate::modal::ConfirmationType::Complete => {
+                    ConfirmationType::Complete => {
                         tx.send(Action::CompleteTask).unwrap();
                     }
                 }
@@ -569,27 +567,27 @@ impl App {
 
         if self.mode == Mode::Insert {
             // Validate modal input before processing
-            if self.ui.has_modal() && !self.ui.validate_modal() {
+            if self.ui.task_list.has_modal() && !self.ui.task_list.validate_modal() {
                 // Validation failed, don't process the input
                 // The modal will display error messages to the user
                 return;
             }
 
-            let values = if self.ui.has_modal() {
-                self.ui.get_modal_values()
+            let values = if self.ui.task_list.has_modal() {
+                self.ui.task_list.get_modal_values()
             } else {
                 // No overlay system anymore, this shouldn't happen
                 vec![]
             };
 
             // Check if this is a postpone modal (has 1 value: duration string)
-            if self.ui.has_modal() && values.len() == 1 && !values[0].contains('\n') {
+            if self.ui.task_list.has_modal() && values.len() == 1 && !values[0].contains('\n') {
                 // This might be a postpone operation - try to parse as duration
                 if let Ok(postpone_target) = utils::parse_duration(&values[0]) {
                     // This is a postpone operation - handle multiple selected tasks
-                    let selected_indices = self.ui.get_selected_indices();
+                    let selected_indices = self.ui.task_list.get_selected_indices();
                     if !selected_indices.is_empty() {
-                        let current_tab = self.ui.get_current_tab();
+                        let current_tab = self.ui.task_list.get_current_tab();
                         let tasks_to_postpone: Vec<_> = selected_indices
                             .iter()
                             .filter_map(|&index| self.get_view_tasks(current_tab).get(index))
@@ -709,7 +707,7 @@ impl App {
                         }
                     }
 
-                    self.ui.close_modal();
+                    self.ui.task_list.close_modal();
                     self.mode = Mode::Normal;
                     return;
                 }
@@ -787,8 +785,8 @@ impl App {
                 });
             }
 
-            if self.ui.has_modal() {
-                self.ui.close_modal();
+            if self.ui.task_list.has_modal() {
+                self.ui.task_list.close_modal();
             }
             // No overlay system anymore, should always have modal in Insert mode
             self.editing_task = None;
@@ -798,8 +796,8 @@ impl App {
 
     fn cancel_input(&mut self) {
         // Handle modal cancellation (including confirmation modals)
-        if self.ui.has_modal() {
-            self.ui.close_modal();
+        if self.ui.task_list.has_modal() {
+            self.ui.task_list.close_modal();
             // For confirmation modals, don't change mode or exit visual mode
             if self.mode == Mode::Insert {
                 self.editing_task = None;
@@ -816,23 +814,23 @@ impl App {
     }
 
     fn next_tab(&mut self) {
-        self.ui.next_tab();
-        self.current_tab = self.ui.get_current_tab();
+        self.ui.task_list.next_tab();
+        self.current_tab = self.ui.task_list.get_current_tab();
         match self.current_tab {
-            ViewTab::Today => self.ui.set_tasks(&self.today_cache),
-            ViewTab::Week => self.ui.set_tasks(&self.week_cache),
-            ViewTab::Inbox => self.ui.set_tasks(&self.inbox_cache),
+            ViewTab::Today => self.ui.task_list.set_tasks(&self.today_cache),
+            ViewTab::Week => self.ui.task_list.set_tasks(&self.week_cache),
+            ViewTab::Inbox => self.ui.task_list.set_tasks(&self.inbox_cache),
         }
         self.sync_task_editor_with_selection();
     }
 
     fn previous_tab(&mut self) {
-        self.ui.previous_tab();
-        self.current_tab = self.ui.get_current_tab();
+        self.ui.task_list.previous_tab();
+        self.current_tab = self.ui.task_list.get_current_tab();
         match self.current_tab {
-            ViewTab::Today => self.ui.set_tasks(&self.today_cache),
-            ViewTab::Week => self.ui.set_tasks(&self.week_cache),
-            ViewTab::Inbox => self.ui.set_tasks(&self.inbox_cache),
+            ViewTab::Today => self.ui.task_list.set_tasks(&self.today_cache),
+            ViewTab::Week => self.ui.task_list.set_tasks(&self.week_cache),
+            ViewTab::Inbox => self.ui.task_list.set_tasks(&self.inbox_cache),
         }
         self.sync_task_editor_with_selection();
     }
@@ -846,7 +844,7 @@ impl App {
     }
 
     fn sync_task_editor_with_selection(&mut self) {
-        if let Some(selected_index) = self.ui.selected_index() {
+        if let Some(selected_index) = self.ui.task_list.selected_index() {
             let tasks = match self.current_tab {
                 ViewTab::Today => &self.today_cache,
                 ViewTab::Week => &self.week_cache,
@@ -882,7 +880,7 @@ impl App {
     }
 
     fn enter_task_editor(&mut self) {
-        if self.ui.selected_index().is_some() {
+        if self.ui.task_list.selected_index().is_some() {
             self.task_editor_focused = true;
             // Task data is already synced by sync_task_editor_with_selection
         }
@@ -915,7 +913,7 @@ impl App {
     }
 
     fn save_task_from_editor(&mut self, tx: UnboundedSender<Action>) {
-        if let Some(selected_index) = self.ui.selected_index() {
+        if let Some(selected_index) = self.ui.task_list.selected_index() {
             let tasks = match self.current_tab {
                 ViewTab::Today => &self.today_cache,
                 ViewTab::Week => &self.week_cache,
@@ -1007,7 +1005,7 @@ impl App {
         use crossterm::event::KeyCode;
 
         // Handle modal key events first, regardless of mode
-        if self.ui.has_modal() && self.mode != Mode::Insert {
+        if self.ui.task_list.has_modal() && self.mode != Mode::Insert {
             // This is a confirmation modal
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -1258,7 +1256,7 @@ impl App {
 
                         // 'l' enters task editor when task is selected
                         KeyCode::Char('l') | KeyCode::Right => {
-                            if self.ui.selected_index().is_some() {
+                            if self.ui.task_list.selected_index().is_some() {
                                 action_tx.send(Action::EnterTaskEditor)?;
                             }
                         }
@@ -1280,9 +1278,13 @@ impl App {
                     match key.code {
                         KeyCode::Esc => {
                             // If there's a modal, let it handle the Esc key first
-                            if self.ui.has_modal() {
+                            if self.ui.task_list.has_modal() {
                                 // Pass Esc to modal - it will return false if it wants the app to handle it
-                                let handled = self.ui.handle_modal_key_event(key).unwrap_or(false);
+                                let handled = self
+                                    .ui
+                                    .task_list
+                                    .handle_modal_key_event(key)
+                                    .unwrap_or(false);
                                 if !handled {
                                     // Modal didn't handle it (already in normal mode), close the modal
                                     action_tx.send(Action::CancelInput)?;
@@ -1305,10 +1307,13 @@ impl App {
                             }
                             // For modals, pass Enter to the modal to handle
                             else {
-                                if self.ui.has_modal() {
+                                if self.ui.task_list.has_modal() {
                                     // Pass Enter to modal - it will return false if it wants the app to handle it
-                                    let handled =
-                                        self.ui.handle_modal_key_event(key).unwrap_or(false);
+                                    let handled = self
+                                        .ui
+                                        .task_list
+                                        .handle_modal_key_event(key)
+                                        .unwrap_or(false);
                                     if !handled {
                                         // Modal didn't handle it (in normal mode), confirm the input
                                         action_tx.send(Action::ConfirmInput)?;
@@ -1318,8 +1323,8 @@ impl App {
                         }
                         _ => {
                             if self.mode == Mode::Insert {
-                                if self.ui.has_modal() {
-                                    let _ = self.ui.handle_modal_key_event(key);
+                                if self.ui.task_list.has_modal() {
+                                    let _ = self.ui.task_list.handle_modal_key_event(key);
                                 }
                                 // No overlay system anymore
                             }
