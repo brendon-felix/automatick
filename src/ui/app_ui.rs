@@ -57,13 +57,13 @@ impl AppUI {
             .direction(ratatui::layout::Direction::Horizontal)
             .constraints(if task_editor_focused {
                 [
-                    Constraint::Percentage(30), // Task list (inactive)
-                    Constraint::Percentage(70), // Task details (active)
+                    Constraint::Percentage(40), // Task list (inactive)
+                    Constraint::Percentage(60), // Task details (active)
                 ]
             } else {
                 [
-                    Constraint::Percentage(70), // Task list (active)
-                    Constraint::Percentage(30), // Task details (inactive)
+                    Constraint::Percentage(60), // Task list (active)
+                    Constraint::Percentage(40), // Task details (inactive)
                 ]
             })
             .split(main_chunks[1]);
