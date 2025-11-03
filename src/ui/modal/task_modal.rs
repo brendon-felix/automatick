@@ -110,10 +110,10 @@ impl TaskModal {
 
     pub fn next_input_field(&mut self) {
         self.current_input_field = match self.current_input_field {
-            InputField::Title => InputField::Description,
-            InputField::Description => InputField::Date,
+            InputField::Title => InputField::Date,
             InputField::Date => InputField::Time,
-            InputField::Time => InputField::Title,
+            InputField::Time => InputField::Description,
+            InputField::Description => InputField::Title,
         };
         // Ensure mode is preserved when switching fields
         if self.is_edit_mode {
@@ -123,10 +123,10 @@ impl TaskModal {
 
     pub fn previous_input_field(&mut self) {
         self.current_input_field = match self.current_input_field {
-            InputField::Title => InputField::Time,
-            InputField::Description => InputField::Title,
-            InputField::Date => InputField::Description,
+            InputField::Title => InputField::Description,
+            InputField::Date => InputField::Title,
             InputField::Time => InputField::Date,
+            InputField::Description => InputField::Time,
         };
         // Ensure mode is preserved when switching fields
         if self.is_edit_mode {
@@ -242,8 +242,8 @@ impl TaskModal {
                 }
             }
         } else {
-            // Go to last field (Time)
-            self.current_input_field = InputField::Time;
+            // Go to last field (Description)
+            self.current_input_field = InputField::Description;
             self.position_cursor_at_end();
             if self.is_edit_mode {
                 self.set_current_editor_to_normal_mode();
@@ -280,6 +280,47 @@ impl TaskModal {
                 self.set_current_editor_to_normal_mode();
             }
             return true;
+        }
+    }
+
+    fn handle_j_navigation_no_wrap(&mut self) -> bool {
+        if self.current_input_field == InputField::Description
+            && !self.is_at_last_line_in_multiline_field()
+        {
+            // Stay in description field, let editor handle j
+            return false;
+        }
+
+        // Move to next field (no wraparound)
+        match self.current_input_field {
+            InputField::Title => {
+                self.current_input_field = InputField::Date;
+                self.position_cursor_at_desired_column(0);
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                true
+            }
+            InputField::Date => {
+                self.current_input_field = InputField::Time;
+                self.position_cursor_at_desired_column(0);
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                true
+            }
+            InputField::Time => {
+                self.current_input_field = InputField::Description;
+                self.position_cursor_at_desired_column(0);
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                true
+            }
+            InputField::Description => {
+                // Don't wrap around, stay at description field
+                true
+            }
         }
     }
 
@@ -324,6 +365,47 @@ impl TaskModal {
                 self.set_current_editor_to_normal_mode();
             }
             return true;
+        }
+    }
+
+    fn handle_k_navigation_no_wrap(&mut self) -> bool {
+        if self.current_input_field == InputField::Description
+            && !self.is_at_first_line_in_multiline_field()
+        {
+            // Stay in description field, let editor handle k
+            return false;
+        }
+
+        // Move to previous field (no wraparound)
+        match self.current_input_field {
+            InputField::Title => {
+                // Don't wrap around, stay at title field
+                true
+            }
+            InputField::Date => {
+                self.current_input_field = InputField::Title;
+                self.position_cursor_at_desired_column(0);
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                true
+            }
+            InputField::Time => {
+                self.current_input_field = InputField::Date;
+                self.position_cursor_at_desired_column(0);
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                true
+            }
+            InputField::Description => {
+                self.current_input_field = InputField::Time;
+                self.position_cursor_at_desired_column(0);
+                if self.is_edit_mode {
+                    self.set_current_editor_to_normal_mode();
+                }
+                true
+            }
         }
     }
 
@@ -453,9 +535,9 @@ impl Modal for TaskModal {
                 Ok(true)
             }
             KeyCode::Char('j') => {
-                // Only handle j navigation in Normal mode
+                // Only handle j navigation in Normal mode (no wraparound)
                 if !self.is_current_editor_in_insert_mode() {
-                    if self.handle_j_navigation() {
+                    if self.handle_j_navigation_no_wrap() {
                         Ok(true)
                     } else {
                         // Let editor handle the key (move down within multiline field)
@@ -469,9 +551,9 @@ impl Modal for TaskModal {
                 }
             }
             KeyCode::Char('k') => {
-                // Only handle k navigation in Normal mode
+                // Only handle k navigation in Normal mode (no wraparound)
                 if !self.is_current_editor_in_insert_mode() {
-                    if self.handle_k_navigation() {
+                    if self.handle_k_navigation_no_wrap() {
                         Ok(true)
                     } else {
                         // Let editor handle the key (move up within multiline field)
@@ -507,7 +589,7 @@ impl Modal for TaskModal {
                 }
             }
             KeyCode::Down => {
-                // Only handle Down navigation in Normal mode (same as j)
+                // Only handle Down navigation in Normal mode (with wraparound)
                 if !self.is_current_editor_in_insert_mode() {
                     if self.handle_j_navigation() {
                         Ok(true)
@@ -523,7 +605,7 @@ impl Modal for TaskModal {
                 }
             }
             KeyCode::Up => {
-                // Only handle Up navigation in Normal mode (same as k)
+                // Only handle Up navigation in Normal mode (with wraparound)
                 if !self.is_current_editor_in_insert_mode() {
                     if self.handle_k_navigation() {
                         Ok(true)
@@ -580,10 +662,10 @@ impl Modal for TaskModal {
             .margin(1)
             .constraints([
                 Constraint::Length(3), // Title field
-                Constraint::Length(8), // Description field
                 Constraint::Length(4), // Date field + error message
                 Constraint::Length(4), // Time field + error message
-                Constraint::Min(1),    // Help text
+                Constraint::Min(5),    // Description field (remaining space, min 5 lines)
+                Constraint::Length(1), // Help text
             ])
             .split(popup_area);
         // Title field
@@ -623,44 +705,6 @@ impl Modal for TaskModal {
         let title_editor_view = EditorView::new(&mut self.input_title_editor).theme(title_theme);
         frame.render_widget(title_editor_view, title_inner);
 
-        // Description field
-        let description_border_color = if self.current_input_field == InputField::Description
-            && self.is_current_editor_in_insert_mode()
-        {
-            if self.is_edit_mode {
-                BORDER_EDIT
-            } else {
-                BORDER_NEW
-            }
-        } else {
-            BORDER_PROCESSING
-        };
-
-        let description_block = Block::default()
-            .title("Description")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(description_border_color))
-            .style(Style::default().bg(NORMAL_BG));
-
-        let description_inner = description_block.inner(chunks[1]);
-        frame.render_widget(description_block, chunks[1]);
-
-        let description_theme = if self.current_input_field == InputField::Description {
-            EditorTheme::default()
-                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
-                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
-                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
-                .hide_status_line()
-        } else {
-            EditorTheme::default()
-                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
-                .hide_status_line()
-                .hide_cursor()
-        };
-        let description_editor_view =
-            EditorView::new(&mut self.input_description_editor).theme(description_theme);
-        frame.render_widget(description_editor_view, description_inner);
-
         // Date field with error message layout
         let date_field_layout = Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
@@ -668,7 +712,7 @@ impl Modal for TaskModal {
                 Constraint::Length(3), // Date input
                 Constraint::Length(1), // Error message
             ])
-            .split(chunks[2]);
+            .split(chunks[1]);
 
         let date_has_error = self.validation_attempted && self.date_error.is_some();
         let date_border_color = if date_has_error {
@@ -723,7 +767,7 @@ impl Modal for TaskModal {
                 Constraint::Length(3), // Time input
                 Constraint::Length(1), // Error message
             ])
-            .split(chunks[3]);
+            .split(chunks[2]);
 
         let time_has_error = self.validation_attempted && self.time_error.is_some();
         let time_border_color = if time_has_error {
@@ -770,6 +814,44 @@ impl Modal for TaskModal {
                 Paragraph::new(error.as_str()).style(Style::default().fg(ACCENT_RED).bg(NORMAL_BG));
             frame.render_widget(error_paragraph, time_field_layout[1]);
         }
+
+        // Description field
+        let description_border_color = if self.current_input_field == InputField::Description
+            && self.is_current_editor_in_insert_mode()
+        {
+            if self.is_edit_mode {
+                BORDER_EDIT
+            } else {
+                BORDER_NEW
+            }
+        } else {
+            BORDER_PROCESSING
+        };
+
+        let description_block = Block::default()
+            .title("Description")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(description_border_color))
+            .style(Style::default().bg(NORMAL_BG));
+
+        let description_inner = description_block.inner(chunks[3]);
+        frame.render_widget(description_block, chunks[3]);
+
+        let description_theme = if self.current_input_field == InputField::Description {
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                .hide_status_line()
+        } else {
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .hide_status_line()
+                .hide_cursor()
+        };
+        let description_editor_view =
+            EditorView::new(&mut self.input_description_editor).theme(description_theme);
+        frame.render_widget(description_editor_view, description_inner);
 
         // Help text at bottom of modal
         let help_text = vec![Line::from(vec![

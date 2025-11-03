@@ -13,9 +13,6 @@ pub const ALT_BG: Color = Color::Rgb(25, 25, 25);
 /// Background color for selected items and header
 pub const SELECTED_BG: Color = Color::Rgb(36, 36, 36);
 
-/// Header background color (same as selected for consistency)
-pub const HEADER_BG: Color = Color::Rgb(36, 36, 36);
-
 // ============================================================================
 // Text/Foreground Colors
 // ============================================================================

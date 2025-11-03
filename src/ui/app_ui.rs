@@ -45,19 +45,27 @@ impl AppUI {
         let main_chunks = Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Header
+                Constraint::Length(1), // Header
                 Constraint::Min(10),   // Content area (task list + details)
                 Constraint::Length(3), // Footer
             ])
             .split(area);
 
         // Content area split horizontally: Task list on left, Details on right
+        // Active pane gets more space (70%), inactive pane gets less (30%)
         let content_chunks = Layout::default()
             .direction(ratatui::layout::Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(60), // Task list
-                Constraint::Percentage(40), // Task details
-            ])
+            .constraints(if task_editor_focused {
+                [
+                    Constraint::Percentage(30), // Task list (inactive)
+                    Constraint::Percentage(70), // Task details (active)
+                ]
+            } else {
+                [
+                    Constraint::Percentage(70), // Task list (active)
+                    Constraint::Percentage(30), // Task details (inactive)
+                ]
+            })
             .split(main_chunks[1]);
 
         self.render_header(f, main_chunks[0], mode, error_message);
@@ -89,71 +97,39 @@ impl AppUI {
         mode: Mode,
         error_message: &Option<String>,
     ) {
-        let title = if let Some(err) = error_message {
-            format!("❌ Error: {}", err)
+        let (title, style) = if let Some(err) = error_message {
+            (
+                Line::from(vec![
+                    Span::styled("❌ ", Style::default().fg(ACCENT_RED).bold()),
+                    Span::styled("Error: ", Style::default().fg(TEXT_WHITE).bold()),
+                    Span::styled(err, Style::default().fg(TEXT_WHITE)),
+                ]),
+                Style::default().bg(ACCENT_RED),
+            )
         } else {
-            match mode {
-                Mode::Processing => "⏳ Automatick - Processing...".to_string(),
-                Mode::Insert => "✏️ Automatick - Insert Mode".to_string(),
-                Mode::Visual => "👁️ Automatick - Visual Mode".to_string(),
-                Mode::Help => "❓ Automatick - Help".to_string(),
-                Mode::Normal => "📋 Automatick".to_string(),
-            }
-        };
+            let (icon, text, accent_color) = match mode {
+                Mode::Processing => ("⏳", " Processing...", ACCENT_YELLOW),
+                Mode::Insert => ("✏️", " Insert Mode", ACCENT_GREEN),
+                Mode::Visual => ("👁️", " Visual Mode", Color::Cyan),
+                Mode::Help => ("❓", " Help", Color::Cyan),
+                Mode::Normal => ("📋", " Automatick", HEADER_FG),
+            };
 
-        let style = if error_message.is_some() {
-            Style::default().fg(TEXT_WHITE).bg(ACCENT_RED).bold()
-        } else {
-            Style::default().fg(HEADER_FG).bg(HEADER_BG).bold()
+            (
+                Line::from(vec![
+                    Span::styled(icon, Style::default().fg(accent_color).bold()),
+                    Span::styled(text, Style::default().fg(HEADER_FG).bold()),
+                ]),
+                Style::default().bg(NORMAL_BG),
+            )
         };
-
-        // Split header into two rows: title and tabs
-        let header_chunks = Layout::default()
-            .direction(ratatui::layout::Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // Title
-                Constraint::Length(1), // Tabs
-            ])
-            .split(area);
 
         let header = Paragraph::new(title)
             .style(style)
-            .block(Block::default().padding(Padding::new(1, 0, 0, 0)));
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(Block::default());
 
-        f.render_widget(header, header_chunks[0]);
-
-        // Render tabs
-        let today_style = if self.task_list.current_tab == ViewTab::Today {
-            Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold()
-        } else {
-            Style::default().fg(HEADER_FG).bg(HEADER_BG)
-        };
-
-        let week_style = if self.task_list.current_tab == ViewTab::Week {
-            Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold()
-        } else {
-            Style::default().fg(HEADER_FG).bg(HEADER_BG)
-        };
-
-        let inbox_style = if self.task_list.current_tab == ViewTab::Inbox {
-            Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold()
-        } else {
-            Style::default().fg(HEADER_FG).bg(HEADER_BG)
-        };
-
-        let tabs_line = Line::from(vec![
-            Span::raw("│"),
-            Span::styled(" 📅 Today ", today_style),
-            Span::raw("│"),
-            Span::styled(" 📆 Week ", week_style),
-            Span::raw("│"),
-            Span::styled(" 📥 Inbox ", inbox_style),
-            Span::raw("│"),
-        ]);
-
-        let tabs = Paragraph::new(tabs_line).style(Style::default().bg(HEADER_BG));
-
-        f.render_widget(tabs, header_chunks[1]);
+        f.render_widget(header, area);
     }
 
     fn render_task_list(
@@ -165,11 +141,6 @@ impl AppUI {
         tasks_loaded: bool,
         task_editor_focused: bool,
     ) {
-        let tab_name = match self.task_list.current_tab {
-            ViewTab::Today => "Today",
-            ViewTab::Week => "Week",
-            ViewTab::Inbox => "Inbox",
-        };
         let border_color = if task_editor_focused {
             BORDER_NORMAL
         } else {
@@ -177,8 +148,45 @@ impl AppUI {
             BORDER_INSERT
         };
 
+        // Create overlapping tab effect with dynamic sizing
+        let tabs_title = match self.task_list.current_tab {
+            ViewTab::Today => Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    "  📅 Today  ",
+                    Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold(),
+                ),
+                Span::styled(" Week", Style::default().fg(TEXT_FG).dim()),
+                Span::raw(" "),
+                Span::styled("Inbox", Style::default().fg(TEXT_FG).dim()),
+                Span::raw(" "),
+            ]),
+            ViewTab::Week => Line::from(vec![
+                Span::raw(" "),
+                Span::styled("Today", Style::default().fg(TEXT_FG).dim()),
+                Span::raw(" "),
+                Span::styled(
+                    "  📆 Week  ",
+                    Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold(),
+                ),
+                Span::styled(" Inbox", Style::default().fg(TEXT_FG).dim()),
+                Span::raw(" "),
+            ]),
+            ViewTab::Inbox => Line::from(vec![
+                Span::raw(" "),
+                Span::styled("Today", Style::default().fg(TEXT_FG).dim()),
+                Span::raw(" "),
+                Span::styled("Week ", Style::default().fg(TEXT_FG).dim()),
+                Span::styled(
+                    "  📥 Inbox  ",
+                    Style::default().fg(TEXT_WHITE).bg(SELECTED_BG).bold(),
+                ),
+                Span::raw(" "),
+            ]),
+        };
+
         let block = Block::default()
-            .title(format!(" {} Tasks ", tab_name))
+            .title(tabs_title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(NORMAL_BG));
@@ -327,16 +335,16 @@ impl AppUI {
         let constraints = if task_editor_focused {
             vec![
                 Constraint::Length(3), // Title field
-                Constraint::Length(8), // Description field
                 Constraint::Length(4), // Date field + error message
                 Constraint::Length(4), // Time field + error message
+                Constraint::Min(3),    // Description field (remaining space, min 3 lines)
             ]
         } else {
             vec![
                 Constraint::Length(3), // Title field
-                Constraint::Length(8), // Description field
                 Constraint::Length(4), // Date field + error message
                 Constraint::Length(4), // Time field + error message
+                Constraint::Min(3),    // Description field (remaining space, min 3 lines)
             ]
         };
 
@@ -384,48 +392,6 @@ impl AppUI {
             EditorView::new(&mut self.task_editor.input_title_editor).theme(title_theme);
         f.render_widget(title_editor_view, title_inner);
 
-        // Description field
-        let description_border_color = if task_editor_focused
-            && self.task_editor.current_input_field == InputField::Description
-            && self.task_editor.is_current_editor_in_insert_mode()
-        {
-            ACCENT_YELLOW
-        } else if task_editor_focused
-            && self.task_editor.current_input_field == InputField::Description
-        {
-            BORDER_INSERT
-        } else {
-            BORDER_NORMAL
-        };
-
-        let description_block = Block::default()
-            .title("Description")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(description_border_color))
-            .style(Style::default().bg(NORMAL_BG));
-
-        let description_inner = description_block.inner(chunks[1]);
-        f.render_widget(description_block, chunks[1]);
-
-        let description_theme = if task_editor_focused
-            && self.task_editor.current_input_field == InputField::Description
-        {
-            EditorTheme::default()
-                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
-                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
-                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
-                .hide_status_line()
-        } else {
-            EditorTheme::default()
-                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
-                .hide_status_line()
-                .hide_cursor()
-        };
-        let description_editor_view =
-            EditorView::new(&mut self.task_editor.input_description_editor)
-                .theme(description_theme);
-        f.render_widget(description_editor_view, description_inner);
-
         // Date field with error message layout
         let date_field_layout = Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
@@ -433,7 +399,7 @@ impl AppUI {
                 Constraint::Length(3), // Date input
                 Constraint::Length(1), // Error message
             ])
-            .split(chunks[2]);
+            .split(chunks[1]);
 
         let date_has_error =
             self.task_editor.validation_attempted && self.task_editor.date_error.is_some();
@@ -490,7 +456,7 @@ impl AppUI {
                 Constraint::Length(3), // Time input
                 Constraint::Length(1), // Error message
             ])
-            .split(chunks[3]);
+            .split(chunks[2]);
 
         let time_has_error =
             self.task_editor.validation_attempted && self.task_editor.time_error.is_some();
@@ -539,6 +505,49 @@ impl AppUI {
                 Paragraph::new(error.as_str()).style(Style::default().fg(ACCENT_RED).bg(NORMAL_BG));
             f.render_widget(error_paragraph, time_field_layout[1]);
         }
+
+        // Description field
+        let description_border_color = if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Description
+            && self.task_editor.is_current_editor_in_insert_mode()
+        {
+            ACCENT_YELLOW
+        } else if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Description
+        {
+            BORDER_INSERT
+        } else {
+            BORDER_NORMAL
+        };
+
+        let description_block = Block::default()
+            .title("Description")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(description_border_color))
+            .style(Style::default().bg(NORMAL_BG));
+
+        let description_inner = description_block.inner(chunks[3]);
+        f.render_widget(description_block, chunks[3]);
+
+        let description_theme = if task_editor_focused
+            && self.task_editor.current_input_field == InputField::Description
+        {
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .cursor_style(Style::default().bg(TEXT_FG).fg(NORMAL_BG))
+                .selection_style(Style::default().bg(SELECTED_BG).fg(TEXT_FG))
+                .hide_status_line()
+        } else {
+            EditorTheme::default()
+                .base(Style::default().bg(NORMAL_BG).fg(TEXT_FG))
+                .hide_status_line()
+                .hide_cursor()
+        };
+
+        let description_editor_view =
+            EditorView::new(&mut self.task_editor.input_description_editor)
+                .theme(description_theme);
+        f.render_widget(description_editor_view, description_inner);
 
         // Render the main border with title
         let border_color = if task_editor_focused {

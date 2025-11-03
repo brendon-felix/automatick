@@ -5,9 +5,9 @@ use edtui::{EditorEventHandler, EditorMode, EditorState, Index2, Lines};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputField {
     Title,
-    Description,
     Date,
     Time,
+    Description,
 }
 
 pub struct TaskEditor {
@@ -91,19 +91,19 @@ impl TaskEditor {
 
     pub fn next_input_field(&mut self) {
         self.current_input_field = match self.current_input_field {
-            InputField::Title => InputField::Description,
-            InputField::Description => InputField::Date,
+            InputField::Title => InputField::Date,
             InputField::Date => InputField::Time,
-            InputField::Time => InputField::Title,
+            InputField::Time => InputField::Description,
+            InputField::Description => InputField::Title,
         };
     }
 
     pub fn previous_input_field(&mut self) {
         self.current_input_field = match self.current_input_field {
-            InputField::Title => InputField::Time,
-            InputField::Description => InputField::Title,
-            InputField::Date => InputField::Description,
+            InputField::Title => InputField::Description,
+            InputField::Date => InputField::Title,
             InputField::Time => InputField::Date,
+            InputField::Description => InputField::Time,
         };
     }
 
@@ -239,7 +239,7 @@ impl TaskEditor {
             }
         } else {
             // Move to last field
-            self.current_input_field = InputField::Time;
+            self.current_input_field = InputField::Description;
             self.position_cursor_at_end();
         }
     }
@@ -255,14 +255,6 @@ impl TaskEditor {
         // Move to next field
         match self.current_input_field {
             InputField::Title => {
-                self.current_input_field = InputField::Description;
-                // Set cursor to first row of new field, then position at desired column
-                let editor = self.get_current_editor_mut();
-                editor.cursor.row = 0;
-                self.position_cursor_at_desired_column();
-                true
-            }
-            InputField::Description => {
                 self.current_input_field = InputField::Date;
                 // Set cursor to first row of new field, then position at desired column
                 let editor = self.get_current_editor_mut();
@@ -279,7 +271,15 @@ impl TaskEditor {
                 true
             }
             InputField::Time => {
-                // Don't wrap around, stay at time field
+                self.current_input_field = InputField::Description;
+                // Set cursor to first row of new field, then position at desired column
+                let editor = self.get_current_editor_mut();
+                editor.cursor.row = 0;
+                self.position_cursor_at_desired_column();
+                true
+            }
+            InputField::Description => {
+                // Don't wrap around, stay at description field
                 true
             }
         }
@@ -299,7 +299,7 @@ impl TaskEditor {
                 // Don't wrap around, stay at title field
                 true
             }
-            InputField::Description => {
+            InputField::Date => {
                 self.current_input_field = InputField::Title;
                 // For single-line fields, position at row 0
                 let editor = self.get_current_editor_mut();
@@ -307,21 +307,16 @@ impl TaskEditor {
                 self.position_cursor_at_desired_column();
                 true
             }
-            InputField::Date => {
-                self.current_input_field = InputField::Description;
-                // For description field, go to last line and position at desired column
+            InputField::Time => {
+                self.current_input_field = InputField::Date;
+                // For single-line fields, position at row 0
                 let editor = self.get_current_editor_mut();
-                let lines_len = editor.lines.len();
-                if lines_len > 0 {
-                    editor.cursor.row = lines_len - 1;
-                } else {
-                    editor.cursor.row = 0;
-                }
+                editor.cursor.row = 0;
                 self.position_cursor_at_desired_column();
                 true
             }
-            InputField::Time => {
-                self.current_input_field = InputField::Date;
+            InputField::Description => {
+                self.current_input_field = InputField::Time;
                 // For single-line fields, position at row 0
                 let editor = self.get_current_editor_mut();
                 editor.cursor.row = 0;
